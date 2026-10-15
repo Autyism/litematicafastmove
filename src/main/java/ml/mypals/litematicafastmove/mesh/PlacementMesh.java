@@ -18,6 +18,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 
 final class PlacementMesh {
@@ -38,7 +39,8 @@ final class PlacementMesh {
         }
     }
     // clientEmpty：构建时对应的真实世界区域 (外扩 1 格) 全是空气
-    record CpuSection(long key, BlockPos origin, boolean hasBlocks, boolean clientEmpty, Clip clip, List<CpuLayer> layers) {}
+    // blockEntities：需要显示的方块实体位置 (构建坐标，BlockPos.asLong)，交给 Litematica 登记渲染
+    record CpuSection(long key, BlockPos origin, boolean hasBlocks, boolean clientEmpty, Clip clip, List<CpuLayer> layers, long[] blockEntities) {}
 
     static final class SortInfo {
         final MeshData.SortState state;
@@ -63,7 +65,7 @@ final class PlacementMesh {
         }
     }
     // hasBlocks：区段内有投影方块，即使被层范围裁空也保留，范围变化时据此判断是否重建
-    record GpuSection(long key, BlockPos origin, boolean hasBlocks, boolean clientEmpty, Clip clip, List<GpuLayer> layers) {
+    record GpuSection(long key, BlockPos origin, boolean hasBlocks, boolean clientEmpty, Clip clip, List<GpuLayer> layers, long[] blockEntities) {
         void close() {
             for (GpuLayer layer : this.layers) {
                 layer.close();
@@ -108,6 +110,9 @@ final class PlacementMesh {
     volatile int requestedGeneration;
     volatile BlockPos targetBuildOrigin;
     volatile PlacementBlockAccessor targetAccessor;
+    // 当前生效网格中各区段的方块实体 (构建坐标)，供 Litematica 区块重建时登记
+    final Map<Long, long[]> blockEntities = new ConcurrentHashMap<>();
+    volatile BlockPos blockEntityBuildOrigin;
 
     //RenderThread only
     final Map<Long, GpuSection> active = new HashMap<>();
@@ -130,5 +135,6 @@ final class PlacementMesh {
         this.uploadingPartials.forEach(BuiltPlacementBuffer::discard);
         this.uploadingPartials.clear();
         this.clipRebuildPending.clear();
+        this.blockEntities.clear();
     }
 }

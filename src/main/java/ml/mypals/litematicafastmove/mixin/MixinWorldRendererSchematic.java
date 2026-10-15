@@ -10,6 +10,7 @@ import com.mojang.renderpearl.api.commands.RenderPass;
 import fi.dy.masa.litematica.render.schematic.OverlayRenderType;
 import fi.dy.masa.litematica.render.schematic.WorldRendererSchematic;
 import ml.mypals.litematicafastmove.mesh.PlacementMeshManager;
+import ml.mypals.litematicafastmove.mesh.PlacementMeshRenderer;
 import ml.mypals.litematicafastmove.sync.PendingMoveTracker;
 import net.minecraft.client.Camera;
 import net.minecraft.client.renderer.DynamicGpuData;
@@ -51,14 +52,14 @@ public class MixinWorldRendererSchematic {
                                                  @Local(name = "colorMod") Vector4fc colorMod,
                                                  @Local(name = "texMatrix") Matrix4f texMatrix,
                                                  @Local(name = "indexCount") LocalIntRef indexCount) {
-        boolean added = PlacementMeshManager.appendDraws(renderMap, transformValues, modelView, colorMod, texMatrix,
+        boolean added = PlacementMeshRenderer.appendDraws(renderMap, transformValues, modelView, colorMod, texMatrix,
                 cameraX, cameraY, cameraZ, indexCount);
         return startedDrawing || added;
     }
 
     @Inject(method = "renderBlockOverlay", at = @At("RETURN"))
     private void drawDetachedPlacementOverlays(OverlayRenderType type, Camera camera, float lineWidth, ProfilerFiller profiler, CallbackInfo ci) {
-        PlacementMeshManager.drawOverlays(type, camera);
+        PlacementMeshRenderer.drawOverlays(type, camera);
     }
 
     @WrapOperation(method = "renderEntities", at = @At(value = "INVOKE",
@@ -92,7 +93,7 @@ public class MixinWorldRendererSchematic {
 
     @Inject(method = "setupTerrain", at = @At("HEAD"))
     private void captureFrustum(Camera camera, Frustum frustum, int frameCount, boolean playerSpectator, ProfilerFiller profiler, CallbackInfo ci) {
-        PlacementMeshManager.captureFrustum(frustum);
+        PlacementMeshRenderer.captureFrustum(frustum);
     }
 
     @Inject(method = "scheduleChunkRenders", at = @At("HEAD"))
