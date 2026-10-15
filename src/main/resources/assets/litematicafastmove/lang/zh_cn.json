@@ -41,5 +41,11 @@
   "litematicafastmove.config.comment.fastMoveMeshBuilderThreads": "网格构建线程数，0 为自动（CPU 核数 / 4）。修改后立即生效。",
   "litematicafastmove.config.name.fastMoveVerifierThreads": "fastMoveVerifierThreads",
   "litematicafastmove.config.prettyName.fastMoveVerifierThreads": "Fast Move：校验线程数",
-  "litematicafastmove.config.comment.fastMoveVerifierThreads": "校验扫描线程数，0 为自动（CPU 核数 - 1）。修改后立即生效。"
+  "litematicafastmove.config.comment.fastMoveVerifierThreads": "校验扫描线程数，0 为自动（CPU 核数 - 1）。修改后立即生效。",
+  "litematicafastmove.config.name.fastMoveDebugGizmos": "fastMoveDebugGizmos",
+  "litematicafastmove.config.prettyName.fastMoveDebugGizmos": "Fast Move：调试框",
+  "litematicafastmove.config.comment.fastMoveDebugGizmos": "在正在处理的投影网格区段上画逐渐淡出的框。\n琥珀色 = 提交重建，绿色 = 重建结果生效，灰色 = 前后真实世界都是空气而跳过，蓝色 = 整个投影完整重建。",
+  "litematicafastmove.config.name.fastMoveDebugGizmoDuration": "fastMoveDebugGizmoDuration",
+  "litematicafastmove.config.prettyName.fastMoveDebugGizmoDuration": "Fast Move：调试框时长（毫秒）",
+  "litematicafastmove.config.comment.fastMoveDebugGizmoDuration": "每个调试框显示并淡出的时长。"
 }

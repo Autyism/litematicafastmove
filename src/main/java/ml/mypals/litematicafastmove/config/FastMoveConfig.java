@@ -43,6 +43,10 @@ public class FastMoveConfig {
     public static final ConfigInteger MESH_BUILDER_THREADS = new ConfigInteger("fastMoveMeshBuilderThreads", 0, 0, 64, "").apply(KEY);
     public static final ConfigInteger VERIFIER_THREADS = new ConfigInteger("fastMoveVerifierThreads", 0, 0, 64, "").apply(KEY);
 
+    // 调试：在正在处理的区段上画淡出的 Gizmo 框
+    public static final ConfigBoolean DEBUG_GIZMOS = new ConfigBoolean("fastMoveDebugGizmos", false, "").apply(KEY);
+    public static final ConfigInteger DEBUG_GIZMO_MILLIS = new ConfigInteger("fastMoveDebugGizmoDuration", 800, 50, 10_000, "").apply(KEY);
+
     public static final ImmutableList<IConfigBase> OPTIONS = ImmutableList.of(
             ENABLE_FAST_MOVE,
             TAKEOVER_ALL_PLACEMENTS,
@@ -57,7 +61,9 @@ public class FastMoveConfig {
             TRANSLUCENT_RESORT_DISTANCE,
             VERIFIER_MERGE_MILLIS_PER_TICK,
             MESH_BUILDER_THREADS,
-            VERIFIER_THREADS
+            VERIFIER_THREADS,
+            DEBUG_GIZMOS,
+            DEBUG_GIZMO_MILLIS
     );
 
     static {

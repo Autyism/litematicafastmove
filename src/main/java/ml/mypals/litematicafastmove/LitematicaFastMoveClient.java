@@ -2,6 +2,7 @@ package ml.mypals.litematicafastmove;
 
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacementManager;
+import ml.mypals.litematicafastmove.mesh.MeshDebugGizmos;
 import ml.mypals.litematicafastmove.mesh.PlacementMeshManager;
 import ml.mypals.litematicafastmove.sync.IFastMoveManager;
 import net.fabricmc.api.ClientModInitializer;
@@ -20,6 +21,7 @@ public class LitematicaFastMoveClient implements ClientModInitializer {
             ((IFastMoveManager) manager).litematicafastmove$commitSettled(System.currentTimeMillis());
 
             PlacementMeshManager.processDirtyChunks();
+            MeshDebugGizmos.flush();
 
             if (++ticks % 10 == 0) {
                 PlacementMeshManager.tick();

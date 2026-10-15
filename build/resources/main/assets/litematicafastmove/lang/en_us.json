@@ -41,5 +41,11 @@
   "litematicafastmove.config.comment.fastMoveMeshBuilderThreads": "Number of mesh builder threads, 0 = automatic (CPU cores / 4). Takes effect immediately.",
   "litematicafastmove.config.name.fastMoveVerifierThreads": "fastMoveVerifierThreads",
   "litematicafastmove.config.prettyName.fastMoveVerifierThreads": "Fast Move: Verifier Threads",
-  "litematicafastmove.config.comment.fastMoveVerifierThreads": "Number of verifier scan threads, 0 = automatic (CPU cores - 1). Takes effect immediately."
+  "litematicafastmove.config.comment.fastMoveVerifierThreads": "Number of verifier scan threads, 0 = automatic (CPU cores - 1). Takes effect immediately.",
+  "litematicafastmove.config.name.fastMoveDebugGizmos": "fastMoveDebugGizmos",
+  "litematicafastmove.config.prettyName.fastMoveDebugGizmos": "Fast Move: Debug Gizmos",
+  "litematicafastmove.config.comment.fastMoveDebugGizmos": "Draw fading boxes on placement mesh sections being processed.\nAmber = rebuild queued, green = rebuilt mesh applied, gray = skipped (real world air before and after), blue = full rebuild of the whole placement.",
+  "litematicafastmove.config.name.fastMoveDebugGizmoDuration": "fastMoveDebugGizmoDuration",
+  "litematicafastmove.config.prettyName.fastMoveDebugGizmoDuration": "Fast Move: Debug Gizmo Duration (ms)",
+  "litematicafastmove.config.comment.fastMoveDebugGizmoDuration": "How long each debug box stays visible while fading out."
 }

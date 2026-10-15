@@ -63,6 +63,7 @@ public final class PlacementMeshManager {
 
         MeshSectionBuilder.submit(placement, mesh, generation, accessor, buildOrigin, null, BlockPos.ZERO, world, clientLevel,
                 built -> MeshUploader.enqueueBuilt(mesh, built));
+        MeshDebugGizmos.fullBuild(accessor, BlockPos.ZERO, false);
     }
 
     static void requestPartialBuild(SchematicPlacement placement, PlacementMesh mesh, Set<Long> keys) {
@@ -75,6 +76,7 @@ public final class PlacementMeshManager {
         BlockPos clientDelta = placement.getOrigin().subtract(buildOrigin);
         MeshSectionBuilder.submit(placement, mesh, mesh.requestedGeneration, accessor, buildOrigin, keys, clientDelta, world, clientLevel,
                 built -> MeshUploader.enqueueBuilt(mesh, built));
+        MeshDebugGizmos.sectionsQueued(accessor, keys, clientDelta);
     }
 
     public static void rebuildAll() {
@@ -213,10 +215,14 @@ public final class PlacementMeshManager {
         ClientLevel clientLevel = Minecraft.getInstance().level;
         if (clientLevel == null) return;
 
+        List<Long> skipped = new ArrayList<>();
         keys.removeIf(key -> {
             PlacementMesh.GpuSection section = mesh.active.get(key);
             boolean wasEmpty = section == null || section.clientEmpty();
-            return wasEmpty && ClientRegions.isSectionEmpty(clientLevel, accessor.minPos, accessor.maxPos, key, delta);
+            boolean skip = wasEmpty && ClientRegions.isSectionEmpty(clientLevel, accessor.minPos, accessor.maxPos, key, delta);
+            if (skip) skipped.add(key);
+            return skip;
         });
+        MeshDebugGizmos.sectionsSkipped(accessor, skipped, delta);
     }
 }

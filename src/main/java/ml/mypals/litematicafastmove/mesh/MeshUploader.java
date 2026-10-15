@@ -66,6 +66,7 @@ final class MeshUploader {
                 upload(full, budget);
                 if (!full.isFullyUploaded()) continue;
                 activateFull(placement, mesh, full, blockEntityChunks);
+                MeshDebugGizmos.fullBuild(mesh.targetAccessor, placement.getOrigin().subtract(full.buildOrigin), true);
             }
 
             PlacementMesh.BuiltPlacementBuffer partial;
@@ -74,6 +75,7 @@ final class MeshUploader {
                 if (!partial.isFullyUploaded()) break;
                 mesh.uploadingPartials.poll();
                 PlacementBlockEntities.update(placement, mesh, partial, blockEntityChunks);
+                MeshDebugGizmos.sectionsApplied(mesh.targetAccessor, partial.keys, placement.getOrigin().subtract(partial.buildOrigin));
                 applyPartial(mesh, partial);
             }
         }
