@@ -20,8 +20,8 @@ final class MeshUploader {
     private record Completed(PlacementMesh mesh, PlacementMesh.BuiltPlacementBuffer buffer) {}
 
     private static final class Budget {
-        long bytes = FastMoveConfig.UPLOAD_BYTES_PER_FRAME;
-        final long deadline = System.nanoTime() + (long) (FastMoveConfig.UPLOAD_MILLIS_PER_FRAME * 1_000_000L);
+        long bytes = FastMoveConfig.uploadBytesPerFrame();
+        final long deadline = System.nanoTime() + (long) (FastMoveConfig.UPLOAD_MILLIS_PER_FRAME.getDoubleValue() * 1_000_000L);
         boolean usedAny;
 
         boolean hasRemaining() {

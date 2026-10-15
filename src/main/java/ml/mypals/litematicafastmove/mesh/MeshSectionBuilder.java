@@ -17,6 +17,7 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
 import ml.mypals.litematicafastmove.LitematicaFastMove;
 import ml.mypals.litematicafastmove.access.PlacementBlockAccessor;
 import ml.mypals.litematicafastmove.config.FastMoveConfig;
+import ml.mypals.litematicafastmove.config.ThreadPools;
 import ml.mypals.litematicafastmove.mixin.BlockModelCacheSchematicAccessor;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -39,7 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
 
@@ -52,8 +53,12 @@ public final class MeshSectionBuilder {
         }
     }
 
-    private static final ExecutorService BUILDER = Executors.newFixedThreadPool(
-            Math.max(1, FastMoveConfig.MESH_BUILDER_THREADS), MeshBuilderThread::new);
+    private static final ThreadPoolExecutor BUILDER = (ThreadPoolExecutor) Executors.newFixedThreadPool(
+            FastMoveConfig.meshBuilderThreads(), MeshBuilderThread::new);
+
+    public static void applyThreadCount() {
+        ThreadPools.resize(BUILDER, FastMoveConfig.meshBuilderThreads());
+    }
 
     private MeshSectionBuilder() {}
 

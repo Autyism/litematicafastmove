@@ -24,7 +24,7 @@ public final class MoveInterpolator {
         double dtMs = lastFrameNanos == 0 ? 0 : (now - lastFrameNanos) / 1.0E6;
         lastFrameNanos = now;
 
-        double tau = FastMoveConfig.MOVE_SMOOTHING_MS;
+        double tau = FastMoveConfig.MOVE_SMOOTHING_MS.getDoubleValue();
         double alpha = tau <= 0 ? 1.0 : 1.0 - Math.exp(-Math.min(dtMs, 250.0) / tau);
 
         DISPLAYED.forEach((placement, displayed) -> {
@@ -33,7 +33,7 @@ public final class MoveInterpolator {
             double dy = target.getY() - displayed[1];
             double dz = target.getZ() - displayed[2];
 
-            if (alpha >= 1.0 || dx * dx + dy * dy + dz * dz > FastMoveConfig.MOVE_SNAP_DISTANCE * FastMoveConfig.MOVE_SNAP_DISTANCE) {
+            if (alpha >= 1.0 || dx * dx + dy * dy + dz * dz > FastMoveConfig.MOVE_SNAP_DISTANCE.getDoubleValue() * FastMoveConfig.MOVE_SNAP_DISTANCE.getDoubleValue()) {
                 displayed[0] = target.getX();
                 displayed[1] = target.getY();
                 displayed[2] = target.getZ();

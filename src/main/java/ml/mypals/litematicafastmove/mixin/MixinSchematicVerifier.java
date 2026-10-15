@@ -70,7 +70,7 @@ public abstract class MixinSchematicVerifier extends TaskBase {
 
     @Inject(method = "verifyChunks", at = @At("HEAD"), cancellable = true)
     private void verifyChunksAsync(ProfilerFiller profiler, CallbackInfoReturnable<Boolean> cir) {
-        if (!FastMoveConfig.ENABLE_ASYNC_VERIFY || this.schematicPlacement == null) return;
+        if (!FastMoveConfig.ENABLE_ASYNC_VERIFY.getBooleanValue() || this.schematicPlacement == null) return;
 
         profiler.push("verify_chunks_async");
         cir.setReturnValue(this.litematicafastmove$verifyChunks());
@@ -146,7 +146,7 @@ public abstract class MixinSchematicVerifier extends TaskBase {
      */
     @Unique
     private boolean litematicafastmove$mergeResults(AsyncSchematicVerifier.Session session) {
-        long deadline = DataManager.getClientTickStartTime() + FastMoveConfig.VERIFIER_MERGE_MILLIS_PER_TICK * 1_000_000L;
+        long deadline = DataManager.getClientTickStartTime() + FastMoveConfig.VERIFIER_MERGE_MILLIS_PER_TICK.getIntegerValue() * 1_000_000L;
         boolean changed = false;
 
         while (System.nanoTime() < deadline) {
@@ -215,14 +215,14 @@ public abstract class MixinSchematicVerifier extends TaskBase {
     @WrapOperation(method = "checkChangedPositions", at = @At(value = "INVOKE",
             target = "Lfi/dy/masa/litematica/world/WorldSchematic;hasChunkAt(Lnet/minecraft/core/BlockPos;)Z"))
     private boolean recheckWithoutWorldSchematic(WorldSchematic world, BlockPos pos, Operation<Boolean> original) {
-        if (FastMoveConfig.ENABLE_ASYNC_VERIFY && this.schematicPlacement != null) return true;
+        if (FastMoveConfig.ENABLE_ASYNC_VERIFY.getBooleanValue() && this.schematicPlacement != null) return true;
         return original.call(world, pos);
     }
 
     @WrapOperation(method = "checkChangedPositions", at = @At(value = "INVOKE",
             target = "Lfi/dy/masa/litematica/world/WorldSchematic;getBlockState(Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/block/state/BlockState;"))
     private BlockState recheckFromPlacement(WorldSchematic world, BlockPos pos, Operation<BlockState> original) {
-        if (FastMoveConfig.ENABLE_ASYNC_VERIFY && this.schematicPlacement != null) {
+        if (FastMoveConfig.ENABLE_ASYNC_VERIFY.getBooleanValue() && this.schematicPlacement != null) {
             PlacementBlockAccessor accessor = PlacementAccessorRegistry.getOrCreate(this.schematicPlacement);
             if (accessor != null) return accessor.getBlockStateAt(pos.getX(), pos.getY(), pos.getZ());
         }

@@ -56,7 +56,7 @@ public abstract class MixinSchematicPlacementManagerI implements IFastMoveManage
         // 纯平移的大型投影：独立网格只需改变换 (见 PlacementMeshManager)，什么都不用重建；
         // WorldSchematic 的重写推迟到停止移动后一次性提交。
         // 首次加载 (addSchematicPlacement) 不经过这里，开关/旋转/镜像/子区域编辑都走原版路径并重建独立网格。
-        if (FastMoveConfig.ENABLE_FAST_MOVE && pureTranslation && FastMoveConfig.shouldDeferCommit(placement)) {
+        if (FastMoveConfig.isFastMoveEnabled() && pureTranslation && FastMoveConfig.shouldDeferCommit(placement)) {
             // chunksPreChange 此刻 = 移动前占据的区块，即 WorldSchematic 中数据实际所在的区块
             PendingMoveTracker.onMoved(placement, pre.origin(), new HashSet<>(this.chunksPreChange));
             ci.cancel();
@@ -138,7 +138,7 @@ public abstract class MixinSchematicPlacementManagerI implements IFastMoveManage
     @Override
     public void litematicafastmove$commitSettled(long nowMs) {
         if (!PendingMoveTracker.hasAnyPending()) return;
-        for (SchematicPlacement placement : PendingMoveTracker.getDueForCommit(nowMs, FastMoveConfig.COMMIT_DELAY_MS)) {
+        for (SchematicPlacement placement : PendingMoveTracker.getDueForCommit(nowMs, FastMoveConfig.COMMIT_DELAY_MS.getIntegerValue())) {
             this.litematicafastmove$commit(placement);
         }
     }

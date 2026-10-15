@@ -22,7 +22,7 @@ public class TranslucentSorter {
     });
     private static final Queue<Resorted> RESORTED = new ConcurrentLinkedQueue<>();
 
-    private int budget = FastMoveConfig.TRANSLUCENT_RESORTS_PER_FRAME;
+    private int budget = FastMoveConfig.TRANSLUCENT_RESORTS_PER_FRAME.getIntegerValue();
 
     private TranslucentSorter() {}
 
@@ -35,7 +35,7 @@ public class TranslucentSorter {
         if (sort == null || sort.pending || this.budget <= 0) return;
 
         double dx = rx - sort.lastX, dy = ry - sort.lastY, dz = rz - sort.lastZ;
-        double threshold = FastMoveConfig.TRANSLUCENT_RESORT_DISTANCE;
+        double threshold = FastMoveConfig.TRANSLUCENT_RESORT_DISTANCE.getDoubleValue();
         if (!Double.isNaN(sort.lastX) && dx * dx + dy * dy + dz * dz <= threshold * threshold) return;
 
         this.budget--;

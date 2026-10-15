@@ -43,7 +43,7 @@ public final class PlacementMeshManager {
 
     public static void requestBuild(SchematicPlacement placement) {
         if (placement == null) return;
-        if (!FastMoveConfig.ENABLE_FAST_MOVE || !isDetached(placement)) {
+        if (!FastMoveConfig.isFastMoveEnabled() || !isDetached(placement)) {
             dispose(placement);
             return;
         }
@@ -121,7 +121,7 @@ public final class PlacementMeshManager {
             }
         }
 
-        if (!FastMoveConfig.ENABLE_FAST_MOVE) {
+        if (!FastMoveConfig.isFastMoveEnabled()) {
             disposeAll();
             return;
         }

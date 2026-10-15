@@ -10,6 +10,7 @@ import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import ml.mypals.litematicafastmove.LitematicaFastMove;
 import ml.mypals.litematicafastmove.access.PlacementBlockAccessor;
 import ml.mypals.litematicafastmove.config.FastMoveConfig;
+import ml.mypals.litematicafastmove.config.ThreadPools;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.state.BlockState;
@@ -25,13 +26,13 @@ import java.util.Map;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class AsyncSchematicVerifier {
-    private static final ExecutorService POOL = Executors.newFixedThreadPool(
-            Math.max(1, FastMoveConfig.VERIFIER_THREADS),
+    private static final ThreadPoolExecutor POOL = (ThreadPoolExecutor) Executors.newFixedThreadPool(
+            FastMoveConfig.verifierThreads(),
             runnable -> {
                 Thread thread = new Thread(runnable, "LFMVerifier");
                 thread.setDaemon(true);
@@ -39,6 +40,10 @@ public final class AsyncSchematicVerifier {
                 return thread;
             }
     );
+
+    public static void applyThreadCount() {
+        ThreadPools.resize(POOL, FastMoveConfig.verifierThreads());
+    }
 
     // 同一组 (类型, 期望 -> 实际) 的全部位置；mismatch 由组内位置共用
     public record MismatchGroup(BlockMismatch mismatch, List<BlockPos> positions) {}

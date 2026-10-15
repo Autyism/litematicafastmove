@@ -1,46 +1,102 @@
 package ml.mypals.litematicafastmove.config;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.schematic.placement.SubRegionPlacement;
 import fi.dy.masa.litematica.selection.Box;
+import fi.dy.masa.litematica.util.SchematicWorldRefresher;
+import fi.dy.masa.malilib.config.IConfigBase;
+import fi.dy.masa.malilib.config.options.ConfigBoolean;
+import fi.dy.masa.malilib.config.options.ConfigDouble;
+import fi.dy.masa.malilib.config.options.ConfigInteger;
+import ml.mypals.litematicafastmove.mesh.MeshSectionBuilder;
+import ml.mypals.litematicafastmove.verify.AsyncSchematicVerifier;
 import net.minecraft.core.BlockPos;
 
+/**
+ * 配置项注入 Litematica：保存在 litematica.json 的 "FastMove" 分类下，显示在 Litematica 配置界面的 Generic 页
+ * (见 MixinConfigs / MixinGuiConfigs)。名称与说明见 assets/litematicafastmove/lang
+ */
 public class FastMoveConfig {
-    public static boolean ENABLE_FAST_MOVE = true;
-    public static boolean TAKEOVER_ALL_PLACEMENTS = true;
-    public static int DETACHED_VOLUME_THRESHOLD = 32*32*32;
-    public static boolean ENABLE_ASYNC_VERIFY = true;
-    public static long COMMIT_DELAY_MS = 1500;
-    public static double MOVE_SMOOTHING_MS = 60;
-    // 单次位移超过此距离 (格) 时不插值，直接瞬移
-    public static double MOVE_SNAP_DISTANCE = 128.0;
+    public static final String CATEGORY = "FastMove";
+    private static final String KEY = "litematicafastmove.config";
+
+    public static final ConfigBoolean ENABLE_FAST_MOVE = new ConfigBoolean("fastMoveEnabled", true, "").apply(KEY);
+    public static final ConfigBoolean TAKEOVER_ALL_PLACEMENTS = new ConfigBoolean("fastMoveTakeoverAllPlacements", true, "").apply(KEY);
+    public static final ConfigInteger DETACHED_VOLUME_THRESHOLD = new ConfigInteger("fastMoveLargePlacementVolume", 32 * 32 * 32, 1, Integer.MAX_VALUE, "").apply(KEY);
+    public static final ConfigBoolean ENABLE_ASYNC_VERIFY = new ConfigBoolean("fastMoveAsyncVerifier", true, "").apply(KEY);
+    public static final ConfigInteger COMMIT_DELAY_MS = new ConfigInteger("fastMoveCommitDelay", 1500, 0, 60_000, "").apply(KEY);
+    public static final ConfigDouble MOVE_SMOOTHING_MS = new ConfigDouble("fastMoveSmoothing", 60, 0, 1000, "").apply(KEY);
+    public static final ConfigDouble MOVE_SNAP_DISTANCE = new ConfigDouble("fastMoveSnapDistance", 128, 0, 30_000_000, "").apply(KEY);
 
     // 每帧预算 (渲染线程)
-    // 网格上传 (创建 GPU buffer)：字节数与耗时，任一用尽即停，剩余留到下一帧
-    public static long UPLOAD_BYTES_PER_FRAME = 8L * 1024 * 1024;
-    public static double UPLOAD_MILLIS_PER_FRAME = 3.0;
-    // 半透明区段重新排序：每帧最多提交的数量，及触发重新排序的相机移动距离 (格)
-    public static int TRANSLUCENT_RESORTS_PER_FRAME = 32;
-    public static double TRANSLUCENT_RESORT_DISTANCE = 1.0;
+    public static final ConfigInteger UPLOAD_KB_PER_FRAME = new ConfigInteger("fastMoveUploadKbPerFrame", 8 * 1024, 64, 1024 * 1024, "").apply(KEY);
+    public static final ConfigDouble UPLOAD_MILLIS_PER_FRAME = new ConfigDouble("fastMoveUploadMsPerFrame", 3.0, 0.1, 100, "").apply(KEY);
+    public static final ConfigInteger TRANSLUCENT_RESORTS_PER_FRAME = new ConfigInteger("fastMoveResortsPerFrame", 32, 0, 4096, "").apply(KEY);
+    public static final ConfigDouble TRANSLUCENT_RESORT_DISTANCE = new ConfigDouble("fastMoveResortDistance", 1.0, 0, 64, "").apply(KEY);
 
     // 每 tick 预算 (主线程)
-    // 校验结果合并：从 tick 开始算起的时间上限 (毫秒)
-    public static long VERIFIER_MERGE_MILLIS_PER_TICK = 50;
+    public static final ConfigInteger VERIFIER_MERGE_MILLIS_PER_TICK = new ConfigInteger("fastMoveVerifierMergeMsPerTick", 50, 1, 1000, "").apply(KEY);
 
-    // 线程数 (启动时读取，修改后需重启)
-    public static int MESH_BUILDER_THREADS = Math.max(1, Runtime.getRuntime().availableProcessors() / 4);
-    public static int VERIFIER_THREADS = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
+    // 线程数 (0 = 自动)
+    public static final ConfigInteger MESH_BUILDER_THREADS = new ConfigInteger("fastMoveMeshBuilderThreads", 0, 0, 64, "").apply(KEY);
+    public static final ConfigInteger VERIFIER_THREADS = new ConfigInteger("fastMoveVerifierThreads", 0, 0, 64, "").apply(KEY);
+
+    public static final ImmutableList<IConfigBase> OPTIONS = ImmutableList.of(
+            ENABLE_FAST_MOVE,
+            TAKEOVER_ALL_PLACEMENTS,
+            DETACHED_VOLUME_THRESHOLD,
+            ENABLE_ASYNC_VERIFY,
+            COMMIT_DELAY_MS,
+            MOVE_SMOOTHING_MS,
+            MOVE_SNAP_DISTANCE,
+            UPLOAD_KB_PER_FRAME,
+            UPLOAD_MILLIS_PER_FRAME,
+            TRANSLUCENT_RESORTS_PER_FRAME,
+            TRANSLUCENT_RESORT_DISTANCE,
+            VERIFIER_MERGE_MILLIS_PER_TICK,
+            MESH_BUILDER_THREADS,
+            VERIFIER_THREADS
+    );
+
+    static {
+        // 接管范围变化：Litematica 的区块网格要重新包含 / 排除这些投影，独立网格随之重建
+        ENABLE_FAST_MOVE.setValueChangeCallback(config -> SchematicWorldRefresher.INSTANCE.updateAll());
+        TAKEOVER_ALL_PLACEMENTS.setValueChangeCallback(config -> SchematicWorldRefresher.INSTANCE.updateAll());
+        DETACHED_VOLUME_THRESHOLD.setValueChangeCallback(config -> SchematicWorldRefresher.INSTANCE.updateAll());
+        // 线程池运行时调整大小
+        MESH_BUILDER_THREADS.setValueChangeCallback(config -> MeshSectionBuilder.applyThreadCount());
+        VERIFIER_THREADS.setValueChangeCallback(config -> AsyncSchematicVerifier.applyThreadCount());
+    }
+
+    public static boolean isFastMoveEnabled() {
+        return ENABLE_FAST_MOVE.getBooleanValue();
+    }
+
+    public static long uploadBytesPerFrame() {
+        return UPLOAD_KB_PER_FRAME.getIntegerValue() * 1024L;
+    }
+
+    public static int meshBuilderThreads() {
+        int value = MESH_BUILDER_THREADS.getIntegerValue();
+        return value > 0 ? value : Math.max(1, Runtime.getRuntime().availableProcessors() / 4);
+    }
+
+    public static int verifierThreads() {
+        int value = VERIFIER_THREADS.getIntegerValue();
+        return value > 0 ? value : Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
+    }
 
     public static boolean isRenderTakenOver(SchematicPlacement placement) {
-        if (!ENABLE_FAST_MOVE || placement == null) return false;
+        if (!isFastMoveEnabled() || placement == null) return false;
         long volume = getVolume(placement);
-        return volume > 0 && (TAKEOVER_ALL_PLACEMENTS || volume >= DETACHED_VOLUME_THRESHOLD);
+        return volume > 0 && (TAKEOVER_ALL_PLACEMENTS.getBooleanValue() || volume >= DETACHED_VOLUME_THRESHOLD.getIntegerValue());
     }
 
     public static boolean shouldDeferCommit(SchematicPlacement placement) {
-        if (!ENABLE_FAST_MOVE || placement == null) return false;
-        return getVolume(placement) >= DETACHED_VOLUME_THRESHOLD;
+        if (!isFastMoveEnabled() || placement == null) return false;
+        return getVolume(placement) >= DETACHED_VOLUME_THRESHOLD.getIntegerValue();
     }
 
     private static long getVolume(SchematicPlacement placement) {
