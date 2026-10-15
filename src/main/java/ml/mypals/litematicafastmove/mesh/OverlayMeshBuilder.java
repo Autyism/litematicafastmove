@@ -2,7 +2,6 @@ package ml.mypals.litematicafastmove.mesh;
 
 import com.mojang.blaze3d.vertex.BufferBuilder;
 import fi.dy.masa.litematica.config.Configs;
-import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.render.RenderUtils;
 import fi.dy.masa.litematica.render.schematic.BlockModelCacheSchematic;
 import fi.dy.masa.litematica.render.schematic.OverlayRenderType;
@@ -247,8 +246,8 @@ final class OverlayMeshBuilder {
         }
         if (this.overlayCulling && stateClient.is(BlockTags.AIR)) {
             for (Direction side : fi.dy.masa.malilib.util.position.PositionUtils.ALL_DIRECTIONS) {
-                if (DataManager.getRenderLayerRange().isPositionAtRenderEdgeOnSide(pos, side) ||
-                    Block.shouldRenderFace(stateSchematic, this.schematic.getBlockState(pos.relative(side)), side)) {
+                // 层范围外在裁剪视图中是空气，裁切面会自然判定为可见
+                if (Block.shouldRenderFace(stateSchematic, this.schematic.getBlockState(pos.relative(side)), side)) {
                     return false;
                 }
             }

@@ -4,9 +4,13 @@
   "compatibilityLevel": "JAVA_21",
   "client": [
     "BlockModelCacheSchematicAccessor",
+    "MixinBlockModelRendererSchematic",
     "MixinChunkRendererSchematicVbo",
+    "MixinFluidModelRendererSchematic",
     "MixinPlacementManagerTaskRebuild",
-    "MixinSchematicPlacementManager",
+    "MixinSchematicPlacementManagerI",
+    "MixinSchematicVerifier",
+    "MixinSchematicWorldRefresher",
     "MixinWorldRendererSchematic",
     "PlacementManagerTaskAccessor"
   ],

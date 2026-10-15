@@ -13,11 +13,6 @@ import net.minecraft.world.level.block.state.BlockState;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * 方针 1：高效访问器
- * 根据原点、AABB 最大包围盒与相对坐标直接从投影容器获取方块状态，
- * 避免每次在 WorldSchematic 和 ChunkSchematic 之间反复读写查找。
- */
 public class PlacementBlockAccessor {
     public final SchematicPlacement placement;
     public final LitematicaSchematic schematic;
@@ -37,6 +32,8 @@ public class PlacementBlockAccessor {
         BlockPos p1 = null;
         BlockPos p2 = null;
         for (var b : boxes.values()) {
+            assert b.getPos1() != null;
+            assert b.getPos2() != null;
             BlockPos boxMin = PositionUtils.getMinCorner(b.getPos1(), b.getPos2());
             BlockPos boxMax = PositionUtils.getMaxCorner(b.getPos1(), b.getPos2());
             p1 = p1 == null ? boxMin : PositionUtils.getMinCorner(p1, boxMin);
@@ -58,9 +55,6 @@ public class PlacementBlockAccessor {
         }
     }
 
-    /**
-     * 是否位于某个启用的子区域内（包围盒是所有子区域的并集，可能包含子区域之间的空隙）
-     */
     public boolean isInAnyRegion(int x, int y, int z) {
         for (RegionEntry entry : regions) {
             if (entry.transform.containsWorld(x, y, z)) return true;

@@ -4,6 +4,7 @@ import ml.mypals.litematicafastmove.access.PlacementBlockAccessor;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.block.BlockAndTintGetter;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.world.level.CardinalLighting;
 import net.minecraft.world.level.ColorResolver;
 import net.minecraft.world.level.Level;
@@ -25,6 +26,9 @@ final class DetachedBlockView implements BlockAndTintGetter {
     private final BlockState[] blockCache = new BlockState[SIZE * SIZE * SIZE];
     //private final BlockEntity[] beCache = new BlockEntity[SIZE * SIZE * SIZE];
     private int baseX, baseY, baseZ;
+    private boolean hasUnclippedBlocks;
+    private Direction.Axis clipAxis;
+    private int clipMin, clipMax;
 
     DetachedBlockView(PlacementBlockAccessor accessor, Level worldSchematic, ClientLevel clientLevel) {
         this.accessor = accessor;
@@ -33,16 +37,38 @@ final class DetachedBlockView implements BlockAndTintGetter {
     }
 
 
+    void setClip(Direction.Axis axis, int min, int max) {
+        this.clipAxis = axis;
+        this.clipMin = min;
+        this.clipMax = max;
+    }
+
+    boolean hasUnclippedBlocks() {
+        return this.hasUnclippedBlocks;
+    }
+
+    private boolean isClipped(int x, int y, int z) {
+        if (this.clipAxis == null) return false;
+        int v = this.clipAxis.choose(x, y, z);
+        return v < this.clipMin || v > this.clipMax;
+    }
+
     boolean loadSection(int sx, int sy, int sz) {
         this.baseX = (sx << 4) - 1;
         this.baseY = (sy << 4) - 1;
         this.baseZ = (sz << 4) - 1;
         boolean hasBlock = false;
+        this.hasUnclippedBlocks = false;
         int i = 0;
         for (int dy = 0; dy < SIZE; dy++) {
             for (int dz = 0; dz < SIZE; dz++) {
                 for (int dx = 0; dx < SIZE; dx++) {
-                    BlockState state = this.accessor.getBlockStateAt(this.baseX + dx, this.baseY + dy, this.baseZ + dz);
+                    int x = this.baseX + dx, y = this.baseY + dy, z = this.baseZ + dz;
+                    BlockState raw = this.accessor.getBlockStateAt(x, y, z);
+                    BlockState state = this.isClipped(x, y, z) ? AIR : raw;
+                    if (!this.hasUnclippedBlocks && !raw.isAir() && dx > 0 && dx < 17 && dy > 0 && dy < 17 && dz > 0 && dz < 17) {
+                        this.hasUnclippedBlocks = true;
+                    }
                     this.blockCache[i++] = state;
                     if (!hasBlock && !state.isAir() && dx > 0 && dx < 17 && dy > 0 && dy < 17 && dz > 0 && dz < 17) {
                         hasBlock = true;
@@ -61,6 +87,7 @@ final class DetachedBlockView implements BlockAndTintGetter {
         if (dx >= 0 && dx < SIZE && dy >= 0 && dy < SIZE && dz >= 0 && dz < SIZE) {
             return this.blockCache[(dy * SIZE + dz) * SIZE + dx];
         }
+        if (this.isClipped(pos.getX(), pos.getY(), pos.getZ())) return AIR;
         BlockState state = this.accessor.getBlockStateAt(pos.getX(), pos.getY(), pos.getZ());
         return state != null ? state : AIR;
     }

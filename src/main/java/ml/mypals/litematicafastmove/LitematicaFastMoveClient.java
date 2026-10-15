@@ -3,7 +3,7 @@ package ml.mypals.litematicafastmove;
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacementManager;
 import ml.mypals.litematicafastmove.mesh.PlacementMeshManager;
-import ml.mypals.litematicafastmove.sync.FastMoveManagerHooks;
+import ml.mypals.litematicafastmove.sync.IFastMoveManager;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
@@ -17,7 +17,7 @@ public class LitematicaFastMoveClient implements ClientModInitializer {
 
             SchematicPlacementManager manager = DataManager.getSchematicPlacementManager();
             if (manager == null) return;
-            ((FastMoveManagerHooks) manager).litematicafastmove$commitSettled(System.currentTimeMillis());
+            ((IFastMoveManager) manager).litematicafastmove$commitSettled(System.currentTimeMillis());
 
             PlacementMeshManager.processDirtyChunks();
 

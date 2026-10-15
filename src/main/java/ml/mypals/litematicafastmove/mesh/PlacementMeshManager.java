@@ -1,11 +1,12 @@
 package ml.mypals.litematicafastmove.mesh;
 
 import com.llamalad7.mixinextras.sugar.ref.LocalIntRef;
-import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.pipeline.RenderTarget;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.BufferBuilder;
 import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.MeshData;
+import com.mojang.blaze3d.vertex.VertexSorting;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.commands.RenderPass;
@@ -25,11 +26,14 @@ import fi.dy.masa.litematica.schematic.LitematicaSchematic;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.world.SchematicWorldHandler;
 import fi.dy.masa.litematica.world.WorldSchematic;
+import fi.dy.masa.malilib.util.LayerMode;
+import fi.dy.masa.malilib.util.position.LayerRange;
 import ml.mypals.litematicafastmove.LitematicaFastMove;
 import ml.mypals.litematicafastmove.access.PlacementBlockAccessor;
 import ml.mypals.litematicafastmove.config.FastMoveConfig;
 import ml.mypals.litematicafastmove.mixin.BlockModelCacheSchematicAccessor;
 import ml.mypals.litematicafastmove.sync.MoveInterpolator;
+import ml.mypals.litematicafastmove.sync.PendingMoveTracker;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -37,16 +41,18 @@ import net.minecraft.client.renderer.DynamicGpuData;
 import net.minecraft.client.renderer.block.FluidRenderer;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
+import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.RenderShape;
-import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.material.FluidState;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Matrix4f;
-import org.joml.Matrix4fStack;
 import org.joml.Matrix4fc;
 import org.joml.Vector3f;
 import org.joml.Vector4f;
@@ -57,10 +63,12 @@ import org.lwjgl.system.MemoryUtil;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.Queue;
@@ -72,33 +80,66 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class PlacementMeshManager {
+    private static final class MeshBuilderThread extends Thread {
+        MeshBuilderThread(Runnable r) {
+            super(r, "LFMMeshBuilder");
+            this.setDaemon(true);
+            this.setPriority(Thread.NORM_PRIORITY - 1);
+        }
+    }
+
     private static final ExecutorService BUILDER = Executors.newFixedThreadPool(
-            Math.max(1, Runtime.getRuntime().availableProcessors() / 4),
-            r -> {
-                Thread t = new Thread(r, "LFMMeshBuilder");
-                t.setDaemon(true);
-                t.setPriority(Thread.NORM_PRIORITY - 1);
-                return t;
-            }
-    );
+            Math.max(1, Runtime.getRuntime().availableProcessors() / 4), MeshBuilderThread::new);
+    private static final ExecutorService SORTER = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "LFMTranslucentSorter");
+        t.setDaemon(true);
+        return t;
+    });
     private static final long UPLOAD_BUDGET_BYTES = 24L * 1024 * 1024;
+    private static final int RESORTS_PER_FRAME = 32;
+    private static final double RESORT_DISTANCE_SQ = 1.0;
 
     private record Completed(PlacementMesh mesh, PlacementMesh.BuiltPlacementBuffer builtPlacementBuffer) {}
+    private record Resorted(PlacementMesh.GpuLayer layer, ByteBuffer indices, double x, double y, double z) {}
+    // 层范围快照 (世界坐标)，null = 不限制
+    private record RangeSnapshot(Direction.Axis axis, int min, int max) {}
+    private record TranslucentDraw(double distanceSq, PlacementMesh.GpuLayer layer, Vector3f offset) {}
 
     private static final Map<SchematicPlacement, PlacementMesh> MESHES = new ConcurrentHashMap<>();
     private static final Queue<Completed> COMPLETED = new ConcurrentLinkedQueue<>();
     private static final Queue<PlacementMesh> TO_CLOSE = new ConcurrentLinkedQueue<>();
+    private static final Queue<Resorted> RESORTED = new ConcurrentLinkedQueue<>();
     private static final Set<Long> DIRTY_CHUNKS = ConcurrentHashMap.newKeySet();
     private static final AtomicInteger GENERATION = new AtomicInteger();
 
+    private static volatile Frustum frustum;
+    private static int dirtySuppression;
+
     public static boolean isDetached(SchematicPlacement placement) {
-        return FastMoveConfig.isPlacementDetached(placement);
+        return FastMoveConfig.isRenderTakenOver(placement);
+    }
+
+    public static boolean isBuilderThread() {
+        return Thread.currentThread() instanceof MeshBuilderThread;
+    }
+
+    public static void captureFrustum(Frustum value) {
+        frustum = value;
     }
 
     public static void markChunkDirty(int chunkX, int chunkZ) {
-        if (!MESHES.isEmpty()) {
+        if (!MESHES.isEmpty() && dirtySuppression == 0) {
             DIRTY_CHUNKS.add(ChunkPos.pack(chunkX, chunkZ));
         }
+    }
+
+    // 层范围变化时 Litematica 会把范围内所有区块标记重绘；独立网格自己按区段裁剪，忽略这些通知
+    public static void pushDirtySuppression() {
+        dirtySuppression++;
+    }
+
+    public static void popDirtySuppression() {
+        dirtySuppression = Math.max(0, dirtySuppression - 1);
     }
 
     public static void requestBuild(SchematicPlacement placement) {
@@ -137,10 +178,13 @@ public final class PlacementMeshManager {
 
     private static void submit(SchematicPlacement placement, PlacementMesh mesh, int generation, PlacementBlockAccessor accessor,
                                BlockPos buildOrigin, Set<Long> keys, BlockPos clientDelta, WorldSchematic world, ClientLevel clientLevel) {
+        RangeSnapshot range = snapshotRange();
+        Vec3 camera = Minecraft.getInstance().gameRenderer.mainCamera().position();
+
         BUILDER.submit(() -> {
             try {
                 long start = System.nanoTime();
-                List<PlacementMesh.CpuSection> sections = build(mesh, generation, accessor, keys, clientDelta, world, clientLevel);
+                List<PlacementMesh.CpuSection> sections = build(mesh, generation, accessor, keys, clientDelta, range, camera, world, clientLevel);
                 if (sections != null) {
                     if (keys == null) {
                         LitematicaFastMove.LOGGER.debug("Built detached mesh for '{}' in {} ms ({} sections)",
@@ -256,8 +300,33 @@ public final class PlacementMeshManager {
         return keys;
     }
 
+    private static RangeSnapshot snapshotRange() {
+        LayerRange range = DataManager.getRenderLayerRange();
+        if (range == null || range.getLayerMode() == LayerMode.ALL) return null;
+        return new RangeSnapshot(range.getAxis(), range.getMinLayerBoundary(), range.getMaxLayerBoundary());
+    }
+
+    /**
+     * 区段 (构建坐标 sectionOrigin，世界坐标 = 构建坐标 + delta) 在层范围下需要的裁剪
+     */
+    private static PlacementMesh.Clip computeClip(RangeSnapshot range, BlockPos min, BlockPos max, BlockPos sectionOrigin, BlockPos delta) {
+        if (range == null) return null;
+
+        Direction.Axis axis = range.axis();
+        int origin = axis.choose(sectionOrigin.getX(), sectionOrigin.getY(), sectionOrigin.getZ());
+        int d = axis.choose(delta.getX(), delta.getY(), delta.getZ());
+        int secMin = Math.max(origin, axis.choose(min.getX(), min.getY(), min.getZ()));
+        int secMax = Math.min(origin + 15, axis.choose(max.getX(), max.getY(), max.getZ()));
+        int lo = Math.max(secMin + d, range.min());
+        int hi = Math.min(secMax + d, range.max());
+
+        if (lo <= secMin + d && hi >= secMax + d) return null;
+        if (lo > hi) return new PlacementMesh.Clip(axis, 1, 0);
+        return new PlacementMesh.Clip(axis, lo - d - origin, hi - d - origin);
+    }
+
     private static List<PlacementMesh.CpuSection> build(PlacementMesh mesh, int generation, PlacementBlockAccessor accessor,
-                                                        Set<Long> keys, BlockPos clientDelta,
+                                                        Set<Long> keys, BlockPos clientDelta, RangeSnapshot range, Vec3 camera,
                                                         WorldSchematic world, ClientLevel clientLevel) {
         BlockPos min = accessor.minPos;
         BlockPos max = accessor.maxPos;
@@ -278,6 +347,17 @@ public final class PlacementMeshManager {
         DetachedBlockView view = new DetachedBlockView(accessor, world, clientLevel);
         EnumMap<ChunkSectionLayer, ByteBufferBuilder> allocators = new EnumMap<>(ChunkSectionLayer.class);
         EnumMap<ChunkSectionLayer, BufferBuilder> builders = new EnumMap<>(ChunkSectionLayer.class);
+        ByteBufferBuilder sortAllocator = new ByteBufferBuilder(64 * 1024);
+
+        // 层范围换算到构建坐标
+        Direction.Axis clipAxis = range != null ? range.axis() : null;
+        int clipMin = Integer.MIN_VALUE, clipMax = Integer.MAX_VALUE;
+        if (range != null) {
+            int d = clipAxis.choose(clientDelta.getX(), clientDelta.getY(), clientDelta.getZ());
+            clipMin = range.min() - d;
+            clipMax = range.max() - d;
+            view.setClip(clipAxis, clipMin, clipMax);
+        }
 
         BlockModelRendererSchematic blockRenderer = new BlockModelRendererSchematic();
         blockRenderer.toggleAO(true);
@@ -318,21 +398,30 @@ public final class PlacementMeshManager {
                 }
 
                 int sx = SectionPos.x(key), sy = SectionPos.y(key), sz = SectionPos.z(key);
+                BlockPos sectionOrigin = new BlockPos(sx << 4, sy << 4, sz << 4);
                 int x0 = Math.max(sx << 4, min.getX()), x1 = Math.min((sx << 4) + 15, max.getX());
                 int y0 = Math.max(sy << 4, min.getY()), y1 = Math.min((sy << 4) + 15, max.getY());
                 int z0 = Math.max(sz << 4, min.getZ()), z1 = Math.min((sz << 4) + 15, max.getZ());
+                PlacementMesh.Clip clip = computeClip(range, min, max, sectionOrigin, clientDelta);
                 List<PlacementMesh.CpuLayer> layers = new ArrayList<>();
 
                 boolean hasSchematicBlocks = view.loadSection(sx, sy, sz);
+                boolean hasBlocks = view.hasUnclippedBlocks();
+                boolean clippedAway = clip != null && clip.isEmpty();
                 // 投影这里全是空气时只可能出现 overlay 的"多余方块"，客户端对应区域也为空就跳过
-                boolean scan = hasSchematicBlocks || (overlay != null && x0 <= x1 && y0 <= y1 && z0 <= z1 &&
+                boolean scan = !clippedAway && (hasSchematicBlocks || (overlay != null && x0 <= x1 && y0 <= y1 && z0 <= z1 &&
                         !isClientRegionEmpty(clientLevel, x0 + clientDelta.getX(), y0 + clientDelta.getY(), z0 + clientDelta.getZ(),
-                                x1 + clientDelta.getX(), y1 + clientDelta.getY(), z1 + clientDelta.getZ()));
+                                x1 + clientDelta.getX(), y1 + clientDelta.getY(), z1 + clientDelta.getZ())));
 
                 if (scan) {
                     for (int y = y0; y <= y1; y++) {
                         for (int z = z0; z <= z1; z++) {
                             for (int x = x0; x <= x1; x++) {
+                                if (clipAxis != null) {
+                                    int v = clipAxis.choose(x, y, z);
+                                    if (v < clipMin || v > clipMax) continue;
+                                }
+
                                 pos.set(x, y, z);
                                 BlockState state = view.getBlockState(pos);
                                 clientPos.setWithOffset(pos, clientDelta);
@@ -362,15 +451,32 @@ public final class PlacementMeshManager {
 
                     for (Map.Entry<ChunkSectionLayer, BufferBuilder> entry : builders.entrySet()) {
                         MeshData meshData = entry.getValue().build();
-                        if (meshData != null) {
-                            layers.add(new PlacementMesh.CpuLayer(entry.getKey(), null, copy(meshData.vertexBuffer()), meshData.drawState().indexCount()));
-                            meshData.close();
+                        if (meshData == null) continue;
+
+                        ByteBuffer indices = null;
+                        MeshData.SortState sortState = null;
+                        if (entry.getKey().translucent()) {
+                            // 半透明层按构建时的相机位置预排序，之后由渲染线程按相机移动重新排序
+                            sortState = meshData.sortQuads(sortAllocator, VertexSorting.byDistance(
+                                    (float) (camera.x - sectionOrigin.getX() - clientDelta.getX()),
+                                    (float) (camera.y - sectionOrigin.getY() - clientDelta.getY()),
+                                    (float) (camera.z - sectionOrigin.getZ() - clientDelta.getZ())));
+                            if (sortState != null && meshData.indexBuffer() != null) {
+                                indices = copy(meshData.indexBuffer());
+                            } else {
+                                sortState = null;
+                            }
                         }
+
+                        layers.add(new PlacementMesh.CpuLayer(entry.getKey(), null, copy(meshData.vertexBuffer()),
+                                meshData.drawState().indexCount(), indices, sortState != null ? sortState.indexType() : null, sortState));
+                        meshData.close();
                     }
                     for (Map.Entry<OverlayRenderType, BufferBuilder> entry : overlayBuilders.entrySet()) {
                         MeshData meshData = entry.getValue().build();
                         if (meshData != null) {
-                            layers.add(new PlacementMesh.CpuLayer(null, entry.getKey(), copy(meshData.vertexBuffer()), meshData.drawState().indexCount()));
+                            layers.add(new PlacementMesh.CpuLayer(null, entry.getKey(), copy(meshData.vertexBuffer()),
+                                    meshData.drawState().indexCount(), null, null, null));
                             meshData.close();
                         }
                     }
@@ -378,17 +484,19 @@ public final class PlacementMeshManager {
                     overlayBuilders.clear();
                     allocators.values().forEach(ByteBufferBuilder::clear);
                     overlayAllocators.values().forEach(ByteBufferBuilder::clear);
+                    sortAllocator.clear();
                 }
 
-                // 局部构建时空区段也要返回，用于清除旧网格
-                if (!layers.isEmpty() || keys != null) {
-                    sections.add(new PlacementMesh.CpuSection(key, new BlockPos(sx << 4, sy << 4, sz << 4), layers));
+                // 局部构建时空区段也要返回，用于清除旧网格；有方块但被裁空的区段保留记录
+                if (hasBlocks || !layers.isEmpty() || keys != null) {
+                    sections.add(new PlacementMesh.CpuSection(key, sectionOrigin, hasBlocks, clip, layers));
                 }
             }
         } finally {
             blockRenderer.disableCache();
             allocators.values().forEach(ByteBufferBuilder::close);
             overlayAllocators.values().forEach(ByteBufferBuilder::close);
+            sortAllocator.close();
         }
 
         return sections;
@@ -484,6 +592,7 @@ public final class PlacementMeshManager {
                         builtPlacementBuffer.uploaded.size(), builtPlacementBuffer.generation);
                 mesh.active.values().forEach(PlacementMesh.GpuSection::close);
                 mesh.active.clear();
+                mesh.clipRebuildPending.clear();
                 for (PlacementMesh.GpuSection section : builtPlacementBuffer.uploaded) {
                     mesh.active.put(section.key(), section);
                 }
@@ -501,6 +610,19 @@ public final class PlacementMeshManager {
                 mesh.deferredPartials.clear();
             }
         }
+
+        Resorted resorted;
+        while ((resorted = RESORTED.poll()) != null) {
+            PlacementMesh.GpuLayer layer = resorted.layer();
+            if (layer.indexBuffer() != null && !layer.indexBuffer().isClosed()) {
+                RenderSystem.getDevice().createCommandEncoder().writeToBuffer(layer.indexBuffer().slice(), resorted.indices());
+            }
+            MemoryUtil.memFree(resorted.indices());
+            layer.sort().lastX = resorted.x();
+            layer.sort().lastY = resorted.y();
+            layer.sort().lastZ = resorted.z();
+            layer.sort().pending = false;
+        }
     }
 
     private static void applyPartial(PlacementMesh mesh, PlacementMesh.BuiltPlacementBuffer builtPlacementBuffer) {
@@ -508,10 +630,13 @@ public final class PlacementMeshManager {
         for (long key : builtPlacementBuffer.keys) {
             PlacementMesh.GpuSection old = mesh.active.remove(key);
             if (old != null) old.close();
+            mesh.clipRebuildPending.remove(key);
         }
         for (PlacementMesh.GpuSection section : builtPlacementBuffer.uploaded) {
-            if (!section.layers().isEmpty()) {
+            if (section.hasBlocks() || !section.layers().isEmpty()) {
                 mesh.active.put(section.key(), section);
+            } else {
+                section.close();
             }
         }
         builtPlacementBuffer.uploaded.clear();
@@ -525,15 +650,106 @@ public final class PlacementMeshManager {
             List<PlacementMesh.GpuLayer> layers = new ArrayList<>(section.layers().size());
             for (PlacementMesh.CpuLayer layer : section.layers()) {
                 budget -= layer.vertices().remaining();
-                GpuBuffer buffer = device.createBuffer(() -> "litematicafastmove:placement_mesh",
+                GpuBuffer vertexBuffer = device.createBuffer(() -> "litematicafastmove:placement_mesh",
                         GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_COPY_DST, layer.vertices());
+                GpuBuffer indexBuffer = null;
+                PlacementMesh.SortInfo sort = null;
+                if (layer.indices() != null) {
+                    budget -= layer.indices().remaining();
+                    indexBuffer = device.createBuffer(() -> "litematicafastmove:placement_mesh_indices",
+                            GpuBuffer.USAGE_INDEX | GpuBuffer.USAGE_COPY_DST, layer.indices());
+                    sort = new PlacementMesh.SortInfo(layer.sortState(), Double.NaN, Double.NaN, Double.NaN);
+                }
                 layer.free();
-                layers.add(new PlacementMesh.GpuLayer(layer.layer(), layer.overlay(), buffer, layer.indexCount()));
+                layers.add(new PlacementMesh.GpuLayer(layer.layer(), layer.overlay(), vertexBuffer, layer.indexCount(),
+                        indexBuffer, layer.indexType(), sort));
             }
-            builtPlacementBuffer.uploaded.add(new PlacementMesh.GpuSection(section.key(), section.origin(), layers));
+            builtPlacementBuffer.uploaded.add(new PlacementMesh.GpuSection(section.key(), section.origin(),
+                    section.hasBlocks(), section.clip(), layers));
         }
 
         return budget;
+    }
+
+    private static void scheduleResort(PlacementMesh.GpuLayer layer, double x, double y, double z) {
+        PlacementMesh.SortInfo sort = layer.sort();
+        sort.pending = true;
+        int size = layer.indexCount() * layer.indexType().bytes;
+        SORTER.submit(() -> {
+            ByteBuffer indices = MemoryUtil.memAlloc(size);
+            try {
+                sort.state.writeSortedIndexBuffer(indices, VertexSorting.byDistance((float) x, (float) y, (float) z));
+                indices.position(0).limit(size);
+                RESORTED.add(new Resorted(layer, indices, x, y, z));
+            } catch (Throwable e) {
+                MemoryUtil.memFree(indices);
+                LitematicaFastMove.LOGGER.debug("Failed to resort translucent section", e);
+            }
+        });
+    }
+
+    private interface SectionVisitor {
+        void visit(PlacementMesh.GpuSection section, double ox, double oy, double oz);
+    }
+
+    /**
+     * 遍历本帧可见的区段：层范围裁剪、距离剔除、视锥剔除 (投影整体 AABB + 区段 AABB)。
+     * 层范围要求的裁剪与区段构建时不同时，提交该区段的局部重建 (移动推迟期间不提交)，重建完成前沿用旧网格。
+     */
+    private static void forEachVisibleSection(double cameraX, double cameraY, double cameraZ, boolean requestClipRebuilds, SectionVisitor visitor) {
+        RangeSnapshot range = snapshotRange();
+        Frustum fr = frustum;
+        int renderDistance = (Minecraft.getInstance().options.getEffectiveRenderDistance() + 2) * 16;
+        double maxDistanceSq = (double) renderDistance * renderDistance;
+
+        for (Map.Entry<SchematicPlacement, PlacementMesh> entry : MESHES.entrySet()) {
+            SchematicPlacement placement = entry.getKey();
+            PlacementMesh mesh = entry.getValue();
+            if (mesh.active.isEmpty() || !placement.isEnabled() || !placement.isRenderingEnabled()) continue;
+
+            BlockPos delta = placement.getOrigin().subtract(mesh.activeBuildOrigin);
+            Vec3 lag = MoveInterpolator.getLag(placement);
+            PlacementBlockAccessor accessor = mesh.targetAccessor;
+            boolean sameBuild = accessor != null && mesh.activeBuildOrigin.equals(mesh.targetBuildOrigin);
+
+            if (fr != null && sameBuild) {
+                AABB box = new AABB(
+                        accessor.minPos.getX() + delta.getX() + lag.x, accessor.minPos.getY() + delta.getY() + lag.y, accessor.minPos.getZ() + delta.getZ() + lag.z,
+                        accessor.maxPos.getX() + delta.getX() + lag.x + 1, accessor.maxPos.getY() + delta.getY() + lag.y + 1, accessor.maxPos.getZ() + delta.getZ() + lag.z + 1);
+                if (!fr.isVisible(box)) continue;
+            }
+
+            boolean canRebuild = requestClipRebuilds && sameBuild && mesh.uploadingFull == null && PendingMoveTracker.get(placement) == null;
+            Set<Long> clipKeys = null;
+
+            for (PlacementMesh.GpuSection section : mesh.active.values()) {
+                if (sameBuild) {
+                    PlacementMesh.Clip required = computeClip(range, accessor.minPos, accessor.maxPos, section.origin(), delta);
+                    if (required != null && required.isEmpty()) continue;
+                    if (canRebuild && (section.hasBlocks() || !section.layers().isEmpty()) && !Objects.equals(required, section.clip()) &&
+                        !mesh.clipRebuildPending.contains(section.key())) {
+                        if (clipKeys == null) clipKeys = new HashSet<>();
+                        clipKeys.add(section.key());
+                    }
+                }
+                if (section.layers().isEmpty()) continue;
+
+                double wx = section.origin().getX() + delta.getX() + lag.x;
+                double wy = section.origin().getY() + delta.getY() + lag.y;
+                double wz = section.origin().getZ() + delta.getZ() + lag.z;
+                double cx = wx + 8.0 - cameraX;
+                double cz = wz + 8.0 - cameraZ;
+                if (cx * cx + cz * cz > maxDistanceSq) continue;
+                if (fr != null && !fr.isVisible(new AABB(wx, wy, wz, wx + 16, wy + 16, wz + 16))) continue;
+
+                visitor.visit(section, wx - cameraX, wy - cameraY, wz - cameraZ);
+            }
+
+            if (clipKeys != null) {
+                mesh.clipRebuildPending.addAll(clipKeys);
+                requestPartialBuild(placement, mesh, clipKeys);
+            }
+        }
     }
 
     public static boolean appendDraws(Map<ChunkSectionLayer, List<RenderPass.Draw<GpuBufferSlice[]>>> renderMap,
@@ -545,101 +761,104 @@ public final class PlacementMeshManager {
         if (MESHES.isEmpty()) return false;
         MoveInterpolator.update();
 
-        int renderDistance = (Minecraft.getInstance().options.getEffectiveRenderDistance() + 2) * 16;
-        double maxDistanceSq = (double) renderDistance * renderDistance;
-        boolean added = false;
+        boolean[] added = {false};
+        int[] resortBudget = {RESORTS_PER_FRAME};
+        List<TranslucentDraw> translucentDraws = new ArrayList<>();
 
-        for (Map.Entry<SchematicPlacement, PlacementMesh> entry : MESHES.entrySet()) {
-            SchematicPlacement placement = entry.getKey();
-            PlacementMesh mesh = entry.getValue();
-            if (mesh.active.isEmpty() || !placement.isEnabled() || !placement.isRenderingEnabled()) continue;
+        forEachVisibleSection(cameraX, cameraY, cameraZ, true, (section, ox, oy, oz) -> {
+            Vector3f offset = new Vector3f((float) ox, (float) oy, (float) oz);
 
-            BlockPos delta = placement.getOrigin().subtract(mesh.activeBuildOrigin);
-            Vec3 lag = MoveInterpolator.getLag(placement);
+            for (PlacementMesh.GpuLayer layer : section.layers()) {
+                if (layer.layer() == null || layer.vertexBuffer().isClosed()) continue;
 
-            for (PlacementMesh.GpuSection section : mesh.active.values()) {
-                double ox = section.origin().getX() + delta.getX() + lag.x - cameraX;
-                double oy = section.origin().getY() + delta.getY() + lag.y - cameraY;
-                double oz = section.origin().getZ() + delta.getZ() + lag.z - cameraZ;
-                double cx = ox + 8.0;
-                double cz = oz + 8.0;
-                if (cx * cx + cz * cz > maxDistanceSq) continue;
-
-                Vector3f offset = new Vector3f((float) ox, (float) oy, (float) oz);
-                for (PlacementMesh.GpuLayer layer : section.layers()) {
-                    if (layer.layer() == null || layer.vertexBuffer().isClosed()) continue;
-
-                    final int slot = transforms.size();
-                    transforms.add(new DynamicGpuData.Transform(modelView, colorModulator, offset, textureMatrix));
-                    renderMap.get(layer.layer()).add(new RenderPass.Draw<>(
-                            0, layer.vertexBuffer(), null, null, 0, layer.indexCount(), 0,
-                            (slices, uploader) -> uploader.setUniform("DynamicTransforms", slices[slot])));
-
-                    if (layer.indexCount() > maxIndexCount.get()) {
-                        maxIndexCount.set(layer.indexCount());
+                if (layer.sort() != null) {
+                    PlacementMesh.SortInfo sort = layer.sort();
+                    double rx = -ox, ry = -oy, rz = -oz; // 相机相对区段原点
+                    double dx = rx - sort.lastX, dy = ry - sort.lastY, dz = rz - sort.lastZ;
+                    if (!sort.pending && resortBudget[0] > 0 &&
+                        (Double.isNaN(sort.lastX) || dx * dx + dy * dy + dz * dz > RESORT_DISTANCE_SQ)) {
+                        resortBudget[0]--;
+                        scheduleResort(layer, rx, ry, rz);
                     }
-                    added = true;
+                    translucentDraws.add(new TranslucentDraw((ox + 8) * (ox + 8) + (oy + 8) * (oy + 8) + (oz + 8) * (oz + 8), layer, offset));
+                    continue;
                 }
+
+                addDraw(renderMap, transforms, modelView, colorModulator, textureMatrix, maxIndexCount, layer, offset);
+                added[0] = true;
             }
+        });
+
+        // 半透明从近到远追加；Litematica 绘制半透明层时会整体倒序，变为从远到近
+        translucentDraws.sort(Comparator.comparingDouble(TranslucentDraw::distanceSq));
+        for (TranslucentDraw draw : translucentDraws) {
+            addDraw(renderMap, transforms, modelView, colorModulator, textureMatrix, maxIndexCount, draw.layer(), draw.offset());
+            added[0] = true;
         }
 
-        return added;
+        return added[0];
     }
 
+    private static void addDraw(Map<ChunkSectionLayer, List<RenderPass.Draw<GpuBufferSlice[]>>> renderMap,
+                                List<DynamicGpuData.Transform> transforms,
+                                Matrix4fc modelView, Vector4fc colorModulator, Matrix4fc textureMatrix,
+                                LocalIntRef maxIndexCount, PlacementMesh.GpuLayer layer, Vector3f offset) {
+        final int slot = transforms.size();
+        transforms.add(new DynamicGpuData.Transform(modelView, colorModulator, offset, textureMatrix));
+        renderMap.get(layer.layer()).add(new RenderPass.Draw<>(
+                0, layer.vertexBuffer(), layer.indexBuffer(), layer.indexType(), 0, layer.indexCount(), 0,
+                (slices, uploader) -> uploader.setUniform("DynamicTransforms", slices[slot])));
 
+        if (layer.indexBuffer() == null && layer.indexCount() > maxIndexCount.get()) {
+            maxIndexCount.set(layer.indexCount());
+        }
+    }
+
+    /**
+     * 同一种 overlay 的所有区段合并为一个 RenderPass 绘制
+     */
     public static void drawOverlays(OverlayRenderType type, Camera camera) {
         if (MESHES.isEmpty()) return;
+
+        Vec3 cameraPos = camera.position();
+        Matrix4f viewMatrix = RenderSystem.getModelViewMatrixCopy();
+        Vector4f colorModulator = new Vector4f(1f, 1f, 1f, 1f);
+        Matrix4f textureMatrix = new Matrix4f();
+        List<RenderPass.Draw<GpuBufferSlice[]>> draws = new ArrayList<>();
+        List<DynamicGpuData.Transform> transforms = new ArrayList<>();
+        int[] maxIndexCount = {0};
+
+        forEachVisibleSection(cameraPos.x, cameraPos.y, cameraPos.z, false, (section, ox, oy, oz) -> {
+            for (PlacementMesh.GpuLayer layer : section.layers()) {
+                if (layer.overlay() != type || layer.indexCount() <= 0 || layer.vertexBuffer().isClosed()) continue;
+
+                final int slot = transforms.size();
+                Matrix4f modelView = new Matrix4f(viewMatrix).translate((float) ox, (float) oy, (float) oz);
+                transforms.add(new DynamicGpuData.Transform(modelView, colorModulator, new Vector3f(), textureMatrix));
+                draws.add(new RenderPass.Draw<>(0, layer.vertexBuffer(), null, null, 0, layer.indexCount(), 0,
+                        (slices, uploader) -> uploader.setUniform("DynamicTransforms", slices[slot])));
+                maxIndexCount[0] = Math.max(maxIndexCount[0], layer.indexCount());
+            }
+        });
+
+        if (draws.isEmpty()) return;
 
         boolean renderThrough = Configs.Visuals.SCHEMATIC_OVERLAY_RENDER_THROUGH.getBooleanValue() ||
                                 Hotkeys.RENDER_OVERLAY_THROUGH_BLOCKS.getKeybind().isKeybindHeld();
         RenderPipeline pipeline = renderThrough ? type.renderThrough() : type.pipeline();
-        Vec3 cameraPos = camera.position();
         RenderTarget target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         GpuTextureView colorTexture = target.getColorTextureView();
         GpuTextureView depthTexture = target.getDepthTextureView();
         RenderSystem.AutoStorageIndexBuffer sequentialIndices = RenderSystem.getSequentialBuffer(type.topology());
-        Matrix4fStack modelViewStack = RenderSystem.getModelViewStack();
+        GpuBufferSlice[] slices = RenderSystem.getDynamicUniforms().writeTransforms(transforms.toArray(new DynamicGpuData.Transform[0]));
 
-        int renderDistance = (Minecraft.getInstance().options.getEffectiveRenderDistance() + 2) * 16;
-        double maxDistanceSq = (double) renderDistance * renderDistance;
-
-        for (Map.Entry<SchematicPlacement, PlacementMesh> entry : MESHES.entrySet()) {
-            SchematicPlacement placement = entry.getKey();
-            PlacementMesh mesh = entry.getValue();
-            if (mesh.active.isEmpty() || !placement.isEnabled() || !placement.isRenderingEnabled()) continue;
-
-            BlockPos delta = placement.getOrigin().subtract(mesh.activeBuildOrigin);
-            Vec3 lag = MoveInterpolator.getLag(placement);
-
-            for (PlacementMesh.GpuSection section : mesh.active.values()) {
-                double ox = section.origin().getX() + delta.getX() + lag.x - cameraPos.x;
-                double oy = section.origin().getY() + delta.getY() + lag.y - cameraPos.y;
-                double oz = section.origin().getZ() + delta.getZ() + lag.z - cameraPos.z;
-                double cx = ox + 8.0;
-                double cz = oz + 8.0;
-                if (cx * cx + cz * cz > maxDistanceSq) continue;
-
-                for (PlacementMesh.GpuLayer layer : section.layers()) {
-                    if (layer.overlay() != type || layer.indexCount() <= 0 || layer.vertexBuffer().isClosed()) continue;
-
-                    modelViewStack.pushMatrix();
-                    modelViewStack.translate((float) ox, (float) oy, (float) oz);
-                    GpuBufferSlice transform = RenderSystem.getDynamicUniforms().writeTransform(
-                            RenderSystem.getModelViewMatrixCopy(), new Vector4f(1f, 1f, 1f, 1f), new Vector3f(), new Matrix4f());
-                    modelViewStack.popMatrix();
-
-                    assert colorTexture != null;
-                    try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                            () -> "litematicafastmove:placement_overlay", colorTexture, Optional.empty(), depthTexture, OptionalDouble.empty())) {
-                        pass.setPipeline(RenderSystem.getCompiledPipeline(pipeline));
-                        RenderSystem.bindDefaultUniforms(pass);
-                        pass.setUniform("DynamicTransforms", transform);
-                        pass.setVertexBuffer(0, layer.vertexBuffer().slice());
-                        pass.setIndexBuffer(sequentialIndices.getBuffer(layer.indexCount()), sequentialIndices.type());
-                        pass.drawIndexed(layer.indexCount(), 1, 0, 0, 0);
-                    }
-                }
-            }
+        assert colorTexture != null;
+        try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
+                () -> "litematicafastmove:placement_overlay", colorTexture, Optional.empty(), depthTexture, OptionalDouble.empty())) {
+            pass.setPipeline(RenderSystem.getCompiledPipeline(pipeline));
+            RenderSystem.bindDefaultUniforms(pass);
+            pass.drawMultipleIndexed(draws, sequentialIndices.getBuffer(maxIndexCount[0]), sequentialIndices.type(),
+                    List.of("DynamicTransforms"), slices);
         }
     }
 }

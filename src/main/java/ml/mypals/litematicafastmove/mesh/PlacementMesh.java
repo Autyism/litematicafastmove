@@ -1,32 +1,70 @@
 package ml.mypals.litematicafastmove.mesh;
 
+import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.renderpearl.api.buffers.GpuBuffer;
+import com.mojang.renderpearl.api.pipeline.IndexType;
 import fi.dy.masa.litematica.render.schematic.OverlayRenderType;
 import ml.mypals.litematicafastmove.access.PlacementBlockAccessor;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 
 final class PlacementMesh {
-    record CpuLayer(ChunkSectionLayer layer, OverlayRenderType overlay, ByteBuffer vertices, int indexCount) {
-        void free() {
-            MemoryUtil.memFree(this.vertices);
+    // 层范围裁剪：沿 axis 只保留区段内相对坐标 [lo, hi]；null = 不裁剪，lo > hi = 整段裁掉
+    record Clip(Direction.Axis axis, int lo, int hi) {
+        boolean isEmpty() {
+            return this.lo > this.hi;
         }
     }
-    record CpuSection(long key, BlockPos origin, List<CpuLayer> layers) {}
-    record GpuLayer(ChunkSectionLayer layer, OverlayRenderType overlay, GpuBuffer vertexBuffer, int indexCount) {}
-    record GpuSection(long key, BlockPos origin, List<GpuLayer> layers) {
+
+    record CpuLayer(ChunkSectionLayer layer, OverlayRenderType overlay, ByteBuffer vertices, int indexCount,
+                    ByteBuffer indices, IndexType indexType, MeshData.SortState sortState) {
+        void free() {
+            MemoryUtil.memFree(this.vertices);
+            if (this.indices != null) {
+                MemoryUtil.memFree(this.indices);
+            }
+        }
+    }
+    record CpuSection(long key, BlockPos origin, boolean hasBlocks, Clip clip, List<CpuLayer> layers) {}
+
+    static final class SortInfo {
+        final MeshData.SortState state;
+        double lastX, lastY, lastZ;
+        boolean pending;
+
+        SortInfo(MeshData.SortState state, double x, double y, double z) {
+            this.state = state;
+            this.lastX = x;
+            this.lastY = y;
+            this.lastZ = z;
+        }
+    }
+
+    record GpuLayer(ChunkSectionLayer layer, OverlayRenderType overlay, GpuBuffer vertexBuffer, int indexCount,
+                    GpuBuffer indexBuffer, IndexType indexType, SortInfo sort) {
+        void close() {
+            this.vertexBuffer.close();
+            if (this.indexBuffer != null) {
+                this.indexBuffer.close();
+            }
+        }
+    }
+    // hasBlocks：区段内有投影方块，即使被层范围裁空也保留，范围变化时据此判断是否重建
+    record GpuSection(long key, BlockPos origin, boolean hasBlocks, Clip clip, List<GpuLayer> layers) {
         void close() {
             for (GpuLayer layer : this.layers) {
-                layer.vertexBuffer.close();
+                layer.close();
             }
         }
     }
@@ -75,6 +113,7 @@ final class PlacementMesh {
     BlockPos activeBuildOrigin;
     BuiltPlacementBuffer uploadingFull;
     final List<BuiltPlacementBuffer> deferredPartials = new ArrayList<>();
+    final Set<Long> clipRebuildPending = new HashSet<>();
 
     void close() {
         this.active.values().forEach(GpuSection::close);
@@ -85,5 +124,6 @@ final class PlacementMesh {
         }
         this.deferredPartials.forEach(BuiltPlacementBuffer::discard);
         this.deferredPartials.clear();
+        this.clipRebuildPending.clear();
     }
 }

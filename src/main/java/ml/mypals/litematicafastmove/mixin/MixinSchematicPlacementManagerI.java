@@ -6,11 +6,10 @@ import fi.dy.masa.litematica.schematic.placement.SchematicPlacementManager;
 import ml.mypals.litematicafastmove.access.PlacementAccessorRegistry;
 import ml.mypals.litematicafastmove.config.FastMoveConfig;
 import ml.mypals.litematicafastmove.mesh.PlacementMeshManager;
-import ml.mypals.litematicafastmove.sync.FastMoveManagerHooks;
+import ml.mypals.litematicafastmove.sync.IFastMoveManager;
 import ml.mypals.litematicafastmove.sync.MoveInterpolator;
 import ml.mypals.litematicafastmove.sync.PendingMoveTracker;
 import ml.mypals.litematicafastmove.sync.PlacementSnapshot;
-import ml.mypals.litematicafastmove.verify.AsyncPlacementVerifier;
 import net.minecraft.world.level.ChunkPos;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -25,7 +24,7 @@ import java.util.HashSet;
 import java.util.Set;
 
 @Mixin(value = SchematicPlacementManager.class, remap = false)
-public abstract class MixinSchematicPlacementManager implements FastMoveManagerHooks {
+public abstract class MixinSchematicPlacementManagerI implements IFastMoveManager {
 
     @Shadow @Final protected Set<ChunkPos> chunksPreChange;
 
@@ -52,27 +51,27 @@ public abstract class MixinSchematicPlacementManager implements FastMoveManagerH
         PlacementAccessorRegistry.invalidate(placement);
 
         PendingMoveTracker.MoveState state = PendingMoveTracker.get(placement);
+        boolean pureTranslation = pre != null && pre.isPureTranslationTo(placement);
 
         // 纯平移的大型投影：独立网格只需改变换 (见 PlacementMeshManager)，什么都不用重建；
         // WorldSchematic 的重写推迟到停止移动后一次性提交。
         // 首次加载 (addSchematicPlacement) 不经过这里，开关/旋转/镜像/子区域编辑都走原版路径并重建独立网格。
-        if (FastMoveConfig.ENABLE_FAST_MOVE && pre != null && pre.isPureTranslationTo(placement) &&
-                FastMoveConfig.isPlacementDetached(placement)) {
+        if (FastMoveConfig.ENABLE_FAST_MOVE && pureTranslation && FastMoveConfig.shouldDeferCommit(placement)) {
             // chunksPreChange 此刻 = 移动前占据的区块，即 WorldSchematic 中数据实际所在的区块
             PendingMoveTracker.onMoved(placement, pre.origin(), new HashSet<>(this.chunksPreChange));
             ci.cancel();
             return;
         }
 
-        // 非纯平移：若正处于暂态，旧数据仍在 base 区块里，并入 pre 集合让原版一起卸载/重建
         if (state != null) {
             this.chunksPreChange.addAll(state.baseChunks);
             PendingMoveTracker.remove(placement);
             this.litematicafastmove$rebuildSkipped();
         }
 
-        // 内容发生变化 (或不再/开始超过阈值)：重新烘焙或释放独立网格
-        PlacementMeshManager.requestBuild(placement);
+        if (!pureTranslation) {
+            PlacementMeshManager.requestBuild(placement);
+        }
     }
 
     @Inject(method = "addSchematicPlacement", at = @At("RETURN"))
@@ -115,7 +114,6 @@ public abstract class MixinSchematicPlacementManager implements FastMoveManagerH
         if (state == null) return;
 
         if (!placement.getOrigin().equals(state.baseOrigin)) {
-            // 一次性走原版流程：pre = base 区块，post = 当前区块
             this.chunksPreChange.clear();
             this.chunksPreChange.addAll(state.baseChunks);
             this.litematicafastmove$committing = true;
@@ -128,11 +126,6 @@ public abstract class MixinSchematicPlacementManager implements FastMoveManagerH
         }
 
         this.litematicafastmove$rebuildSkipped();
-
-        // 触发异步多线程校验 (方针 2)
-        if (FastMoveConfig.ENABLE_ASYNC_VERIFY) {
-            AsyncPlacementVerifier.submitVerification(placement);
-        }
     }
 
     @Override

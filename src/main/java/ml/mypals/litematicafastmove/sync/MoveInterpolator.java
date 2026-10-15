@@ -1,10 +1,14 @@
 package ml.mypals.litematicafastmove.sync;
 
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
+import fi.dy.masa.litematica.schematic.placement.SubRegionPlacement;
+import fi.dy.masa.litematica.selection.Box;
 import ml.mypals.litematicafastmove.config.FastMoveConfig;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -41,14 +45,47 @@ public final class MoveInterpolator {
             displayed[1] = Math.abs(dy) < EPSILON ? target.getY() : displayed[1] + dy * alpha;
             displayed[2] = Math.abs(dz) < EPSILON ? target.getZ() : displayed[2] + dz * alpha;
         });
+
+        List<LagBox> lagging = new ArrayList<>();
+        DISPLAYED.forEach((placement, displayed) -> {
+            BlockPos target = placement.getOrigin();
+            Vec3 lag = new Vec3(displayed[0] - target.getX(), displayed[1] - target.getY(), displayed[2] - target.getZ());
+            if (lag.lengthSqr() < EPSILON * EPSILON) return;
+
+            for (Box box : placement.getSubRegionBoxes(SubRegionPlacement.RequiredEnabled.PLACEMENT_ENABLED).values()) {
+                BlockPos a = box.getPos1(), b = box.getPos2();
+                if (a == null || b == null) continue;
+                lagging.add(new LagBox(Math.min(a.getX(), b.getX()), Math.min(a.getY(), b.getY()), Math.min(a.getZ(), b.getZ()),
+                        Math.max(a.getX(), b.getX()), Math.max(a.getY(), b.getY()), Math.max(a.getZ(), b.getZ()), lag));
+            }
+        });
+        laggingBoxes = lagging.isEmpty() ? List.of() : lagging;
     }
 
-    /**
-     * 显示原点相对真实原点的滞后量 (显示 - 真实)；首次查询的投影没有滞后
-     */
+    private record LagBox(int minX, int minY, int minZ, int maxX, int maxY, int maxZ, Vec3 lag) {}
+
+    private static volatile List<LagBox> laggingBoxes = List.of();
+
+    public static boolean hasLagging() {
+        return !laggingBoxes.isEmpty();
+    }
+
+    public static Vec3 getLagShiftAt(double x, double y, double z) {
+        List<LagBox> boxes = laggingBoxes;
+        if (boxes.isEmpty()) return null;
+
+        int bx = (int) Math.floor(x), by = (int) Math.floor(y), bz = (int) Math.floor(z);
+        for (LagBox box : boxes) {
+            if (bx >= box.minX() && bx <= box.maxX() && by >= box.minY() && by <= box.maxY() && bz >= box.minZ() && bz <= box.maxZ()) {
+                return box.lag();
+            }
+        }
+        return null;
+    }
+
     public static Vec3 getLag(SchematicPlacement placement) {
         BlockPos origin = placement.getOrigin();
-        double[] displayed = DISPLAYED.computeIfAbsent(placement, p -> new double[]{origin.getX(), origin.getY(), origin.getZ()});
+        double[] displayed = DISPLAYED.computeIfAbsent(placement, point -> new double[]{origin.getX(), origin.getY(), origin.getZ()});
         return new Vec3(displayed[0] - origin.getX(), displayed[1] - origin.getY(), displayed[2] - origin.getZ());
     }
 
@@ -58,5 +95,6 @@ public final class MoveInterpolator {
 
     public static void clear() {
         DISPLAYED.clear();
+        laggingBoxes = List.of();
     }
 }

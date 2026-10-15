@@ -56,23 +56,16 @@ public class MixinWorldRendererSchematic {
         return startedDrawing || added;
     }
 
-
-    /**
-     * 大型投影的 overlay 在各自的独立网格里，随投影当前原点绘制
-     */
     @Inject(method = "renderBlockOverlay", at = @At("RETURN"))
     private void drawDetachedPlacementOverlays(OverlayRenderType type, Camera camera, float lineWidth, ProfilerFiller profiler, CallbackInfo ci) {
         PlacementMeshManager.drawOverlays(type, camera);
     }
 
-    /**
-     * 移动待提交期间：投影中的实体仍在 WorldSchematic 的旧位置，随区域一起平移
-     */
     @WrapOperation(method = "renderEntities", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/client/renderer/entity/EntityRenderDispatcher;submit(Lnet/minecraft/client/renderer/entity/state/EntityRenderState;Lnet/minecraft/client/renderer/state/level/CameraRenderState;DDDLcom/mojang/blaze3d/vertex/PoseStack;Lnet/minecraft/client/renderer/SubmitNodeCollector;)V"))
     private void shiftPendingEntity(EntityRenderDispatcher dispatcher, EntityRenderState state, CameraRenderState cameraState,
                                     double x, double y, double z, PoseStack matrices, SubmitNodeCollector queue, Operation<Void> original) {
-        if (PendingMoveTracker.hasAnyPending()) {
+        if (PendingMoveTracker.hasAnyObjectShift()) {
             Vec3 shift = PendingMoveTracker.getObjectShift(state.x, state.y, state.z);
             if (shift != null) {
                 x += shift.x;
@@ -83,21 +76,23 @@ public class MixinWorldRendererSchematic {
         original.call(dispatcher, state, cameraState, x, y, z, matrices, queue);
     }
 
-    /**
-     * 移动待提交期间：投影中的方块实体同样随区域一起平移
-     */
     @Inject(method = "renderBlockEntities", at = @At(value = "INVOKE",
             target = "Lcom/mojang/blaze3d/vertex/PoseStack;translate(DDD)V", shift = At.Shift.AFTER))
     private void shiftPendingBlockEntity(Camera camera, Frustum frustum, PoseStack matrices, LevelRenderState renderStates,
                                          SubmitNodeCollector queue, ProfilerFiller profiler, CallbackInfo ci,
                                          @Local BlockEntityRenderState state) {
-        if (!PendingMoveTracker.hasAnyPending()) return;
+        if (!PendingMoveTracker.hasAnyObjectShift()) return;
 
         BlockPos pos = state.blockPos;
         Vec3 shift = PendingMoveTracker.getObjectShift(pos.getX(), pos.getY(), pos.getZ());
         if (shift != null) {
             matrices.translate(shift.x, shift.y, shift.z);
         }
+    }
+
+    @Inject(method = "setupTerrain", at = @At("HEAD"))
+    private void captureFrustum(Camera camera, Frustum frustum, int frameCount, boolean playerSpectator, ProfilerFiller profiler, CallbackInfo ci) {
+        PlacementMeshManager.captureFrustum(frustum);
     }
 
     @Inject(method = "scheduleChunkRenders", at = @At("HEAD"))

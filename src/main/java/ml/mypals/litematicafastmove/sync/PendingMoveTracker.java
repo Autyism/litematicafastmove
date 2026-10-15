@@ -13,19 +13,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/**
- * 大型投影被连续平移时，推迟 WorldSchematic 的重写。
- *
- * 方块几何由独立网格负责、移动即时生效；WorldSchematic 只服务于 overlay、校验器、
- * Easy Place 等功能，它的重写 (以及随之而来的 overlay 重建) 在停止移动一段时间后
- * 由 MixinSchematicPlacementManager 一次性提交。期间 base 区块被"冻结"，
- * 防止原版重建按新原点往旧区块写入错位数据。
- *
- * 方块与 overlay 在独立网格中随投影移动；提交前 WorldSchematic 里的实体、方块实体仍在旧位置，
- * 渲染时按坐标判断归属，平移 (当前原点 - base 原点)，不影响其他投影。
- *
- * 线程：状态只在客户端主线程修改；Placement Manager 守护线程只读取 {@link #frozenChunks} 快照。
- */
 public final class PendingMoveTracker {
     public static final class MoveState {
         public final BlockPos baseOrigin;
@@ -91,9 +78,13 @@ public final class PendingMoveTracker {
         shiftedBoxes = List.of();
     }
 
+    public static boolean hasAnyObjectShift() {
+        return !shiftedBoxes.isEmpty() || MoveInterpolator.hasLagging();
+    }
+
     public static Vec3 getObjectShift(double x, double y, double z) {
         List<ShiftedBox> boxes = shiftedBoxes;
-        if (boxes.isEmpty()) return null;
+        if (boxes.isEmpty()) return MoveInterpolator.getLagShiftAt(x, y, z);
 
         int bx = (int) Math.floor(x), by = (int) Math.floor(y), bz = (int) Math.floor(z);
         for (ShiftedBox box : boxes) {
@@ -102,7 +93,7 @@ public final class PendingMoveTracker {
                 return MoveInterpolator.getLag(box.placement()).add(delta.getX(), delta.getY(), delta.getZ());
             }
         }
-        return null;
+        return MoveInterpolator.getLagShiftAt(x, y, z);
     }
 
     public static boolean isFrozenChunk(int chunkX, int chunkZ) {
@@ -114,9 +105,6 @@ public final class PendingMoveTracker {
         SKIPPED_REBUILDS.add(ChunkPos.pack(chunkX, chunkZ));
     }
 
-    /**
-     * 取出已解冻的被拦截区块（调用前应已 {@link #remove} 对应投影）
-     */
     public static List<ChunkPos> drainUnfrozenSkipped() {
         List<ChunkPos> result = new ArrayList<>();
         for (Long key : SKIPPED_REBUILDS) {
