@@ -13,8 +13,10 @@ import org.lwjgl.system.MemoryUtil;
 import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -29,8 +31,9 @@ final class PlacementMesh {
         }
     }
 
+    // hash：顶点数据的内容哈希，与旧网格相同则直接沿用旧 buffer，不重新上传
     record CpuLayer(ChunkSectionLayer layer, OverlayRenderType overlay, ByteBuffer vertices, int indexCount,
-                    ByteBuffer indices, IndexType indexType, MeshData.SortState sortState) {
+                    ByteBuffer indices, IndexType indexType, MeshData.SortState sortState, long hash) {
         void free() {
             MemoryUtil.memFree(this.vertices);
             if (this.indices != null) {
@@ -56,7 +59,12 @@ final class PlacementMesh {
     }
 
     record GpuLayer(ChunkSectionLayer layer, OverlayRenderType overlay, GpuBuffer vertexBuffer, int indexCount,
-                    GpuBuffer indexBuffer, IndexType indexType, SortInfo sort) {
+                    GpuBuffer indexBuffer, IndexType indexType, SortInfo sort, int vertexBytes, long hash) {
+        boolean sameContent(CpuLayer cpu) {
+            return this.layer == cpu.layer() && this.overlay == cpu.overlay() && this.indexCount == cpu.indexCount() &&
+                   this.vertexBytes == cpu.vertices().remaining() && this.hash == cpu.hash();
+        }
+
         void close() {
             this.vertexBuffer.close();
             if (this.indexBuffer != null) {
@@ -71,6 +79,13 @@ final class PlacementMesh {
                 layer.close();
             }
         }
+
+        // 被新构建沿用的layer已转交给新区段，不能关闭
+        void closeExcept(Set<GpuLayer> keep) {
+            for (GpuLayer layer : this.layers) {
+                if (!keep.contains(layer)) layer.close();
+            }
+        }
     }
 
 
@@ -80,6 +95,8 @@ final class PlacementMesh {
         final Set<Long> keys;
         final List<CpuSection> pending;
         final List<GpuSection> uploaded = new ArrayList<>();
+        // 从当前网格沿用的 layer (按引用比较)；应用前它们仍归旧区段所有
+        final Set<GpuLayer> borrowed = Collections.newSetFromMap(new IdentityHashMap<>());
         int nextToUpload;
 
         BuiltPlacementBuffer(int generation, BlockPos buildOrigin, Set<Long> keys, List<CpuSection> pending) {
@@ -102,8 +119,9 @@ final class PlacementMesh {
                 this.pending.get(i).layers().forEach(CpuLayer::free);
             }
             this.nextToUpload = this.pending.size();
-            this.uploaded.forEach(GpuSection::close);
+            this.uploaded.forEach(section -> section.closeExcept(this.borrowed));
             this.uploaded.clear();
+            this.borrowed.clear();
         }
     }
 

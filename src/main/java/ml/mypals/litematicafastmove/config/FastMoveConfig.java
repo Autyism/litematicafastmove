@@ -36,6 +36,9 @@ public class FastMoveConfig {
     public static final ConfigInteger TRANSLUCENT_RESORTS_PER_FRAME = new ConfigInteger("fastMoveResortsPerFrame", 32, 0, 4096, "").apply(KEY);
     public static final ConfigDouble TRANSLUCENT_RESORT_DISTANCE = new ConfigDouble("fastMoveResortDistance", 1.0, 0, 64, "").apply(KEY);
 
+    // 网格构建每批处理的区段数：小批次能更早显示、更均匀地分散到各构建线程
+    public static final ConfigInteger BUILD_BATCH_SECTIONS = new ConfigInteger("fastMoveBuildBatchSections", 32, 1, 4096, "").apply(KEY);
+
     // 每 tick 预算 (主线程)
     public static final ConfigInteger VERIFIER_MERGE_MILLIS_PER_TICK = new ConfigInteger("fastMoveVerifierMergeMsPerTick", 50, 1, 1000, "").apply(KEY);
 
@@ -59,6 +62,7 @@ public class FastMoveConfig {
             UPLOAD_MILLIS_PER_FRAME,
             TRANSLUCENT_RESORTS_PER_FRAME,
             TRANSLUCENT_RESORT_DISTANCE,
+            BUILD_BATCH_SECTIONS,
             VERIFIER_MERGE_MILLIS_PER_TICK,
             MESH_BUILDER_THREADS,
             VERIFIER_THREADS,

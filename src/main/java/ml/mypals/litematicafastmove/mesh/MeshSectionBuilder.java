@@ -34,8 +34,11 @@ import net.minecraft.world.phys.Vec3;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -66,46 +69,115 @@ public final class MeshSectionBuilder {
         return Thread.currentThread() instanceof MeshBuilderThread;
     }
 
+    /**
+     * 提交构建；keys == null 为完整构建。区段按离相机由近到远分批，分散到所有构建线程并行处理：
+     * 局部构建每批完成即交给 onBuilt，逐批生效；完整构建等所有批次完成后合并为一次整体替换。
+     * 被新一代构建取代时直接丢弃
+     */
     static void submit(SchematicPlacement placement, PlacementMesh mesh, int generation, PlacementBlockAccessor accessor,
                        BlockPos buildOrigin, Set<Long> keys, BlockPos clientDelta, WorldSchematic world, ClientLevel clientLevel,
                        Consumer<PlacementMesh.BuiltPlacementBuffer> onBuilt) {
         LayerRangeClip.Range range = LayerRangeClip.snapshot();
         Vec3 camera = Minecraft.getInstance().gameRenderer.mainCamera().position();
+        boolean full = keys == null;
 
-        BUILDER.submit(() -> {
-            try {
-                long start = System.nanoTime();
-                List<PlacementMesh.CpuSection> sections = build(mesh, generation, accessor, keys, clientDelta, range, camera, world, clientLevel);
-                if (sections != null) {
-                    if (keys == null) {
-                        LitematicaFastMove.LOGGER.debug("Built detached mesh for '{}' in {} ms ({} sections)",
-                                placement.getName(), (System.nanoTime() - start) / 1_000_000, sections.size());
-                    }
-                    onBuilt.accept(new PlacementMesh.BuiltPlacementBuffer(generation, buildOrigin, keys, sections));
+        List<Long> sectionKeys = full ? allSections(accessor) : new ArrayList<>(keys);
+        sectionKeys.sort(Comparator.comparingDouble(key -> distanceSq(key, clientDelta, camera)));
+        List<List<Long>> batches = partition(sectionKeys, Math.max(1, FastMoveConfig.BUILD_BATCH_SECTIONS.getIntegerValue()));
+        FullBuild collector = full ? new FullBuild(placement, generation, buildOrigin, batches.size(), onBuilt) : null;
+
+        for (List<Long> batch : batches) {
+            BUILDER.submit(() -> {
+                List<PlacementMesh.CpuSection> sections = null;
+                try {
+                    sections = build(mesh, generation, accessor, batch, !full, clientDelta, range, camera, world, clientLevel);
+                } catch (Throwable e) {
+                    LitematicaFastMove.LOGGER.error("Failed to build mesh for placement '{}'", placement.getName(), e);
                 }
-            } catch (Throwable e) {
-                LitematicaFastMove.LOGGER.error("Failed to build mesh for placement '{}'", placement.getName(), e);
-            }
-        });
+                if (full) {
+                    collector.complete(sections);
+                } else if (sections != null) {
+                    onBuilt.accept(new PlacementMesh.BuiltPlacementBuffer(generation, buildOrigin, new HashSet<>(batch), sections));
+                }
+            });
+        }
     }
 
-    private static List<PlacementMesh.CpuSection> build(PlacementMesh mesh, int generation, PlacementBlockAccessor accessor,
-                                                        Set<Long> keys, BlockPos clientDelta, LayerRangeClip.Range range, Vec3 camera,
-                                                        WorldSchematic world, ClientLevel clientLevel) {
+    // 完整构建的各批次结果，全部完成后合并提交；任一批次被取消或失败则整体作废
+    private static final class FullBuild {
+        private final SchematicPlacement placement;
+        private final int generation;
+        private final BlockPos buildOrigin;
+        private final Consumer<PlacementMesh.BuiltPlacementBuffer> onBuilt;
+        private final List<PlacementMesh.CpuSection> sections = new ArrayList<>();
+        private final long start = System.nanoTime();
+        private int remaining;
+        private boolean failed;
+
+        FullBuild(SchematicPlacement placement, int generation, BlockPos buildOrigin, int batches, Consumer<PlacementMesh.BuiltPlacementBuffer> onBuilt) {
+            this.placement = placement;
+            this.generation = generation;
+            this.buildOrigin = buildOrigin;
+            this.remaining = batches;
+            this.onBuilt = onBuilt;
+        }
+
+        void complete(List<PlacementMesh.CpuSection> batch) {
+            synchronized (this) {
+                if (batch == null) {
+                    this.failed = true;
+                } else {
+                    this.sections.addAll(batch);
+                }
+                if (--this.remaining > 0) return;
+            }
+
+            if (this.failed) {
+                this.sections.forEach(section -> section.layers().forEach(PlacementMesh.CpuLayer::free));
+                return;
+            }
+            LitematicaFastMove.LOGGER.debug("Built detached mesh for '{}' in {} ms ({} sections)",
+                    this.placement.getName(), (System.nanoTime() - this.start) / 1_000_000, this.sections.size());
+            this.onBuilt.accept(new PlacementMesh.BuiltPlacementBuffer(this.generation, this.buildOrigin, null, this.sections));
+        }
+    }
+
+    private static List<Long> allSections(PlacementBlockAccessor accessor) {
         BlockPos min = accessor.minPos;
         BlockPos max = accessor.maxPos;
-        List<Long> sectionKeys = new ArrayList<>();
-        if (keys != null) {
-            sectionKeys.addAll(keys);
-        } else {
-            for (int sy = min.getY() >> 4; sy <= max.getY() >> 4; sy++) {
-                for (int sz = min.getZ() >> 4; sz <= max.getZ() >> 4; sz++) {
-                    for (int sx = min.getX() >> 4; sx <= max.getX() >> 4; sx++) {
-                        sectionKeys.add(SectionPos.asLong(sx, sy, sz));
-                    }
+        List<Long> keys = new ArrayList<>();
+        for (int sy = min.getY() >> 4; sy <= max.getY() >> 4; sy++) {
+            for (int sz = min.getZ() >> 4; sz <= max.getZ() >> 4; sz++) {
+                for (int sx = min.getX() >> 4; sx <= max.getX() >> 4; sx++) {
+                    keys.add(SectionPos.asLong(sx, sy, sz));
                 }
             }
         }
+        return keys;
+    }
+
+    private static double distanceSq(long key, BlockPos delta, Vec3 camera) {
+        double dx = (SectionPos.x(key) << 4) + 8 + delta.getX() - camera.x;
+        double dy = (SectionPos.y(key) << 4) + 8 + delta.getY() - camera.y;
+        double dz = (SectionPos.z(key) << 4) + 8 + delta.getZ() - camera.z;
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    private static List<List<Long>> partition(List<Long> keys, int size) {
+        List<List<Long>> batches = new ArrayList<>();
+        for (int i = 0; i < keys.size(); i += size) {
+            batches.add(new ArrayList<>(keys.subList(i, Math.min(keys.size(), i + size))));
+        }
+        return batches;
+    }
+
+    // emitEmpty：局部构建时空区段也要返回，用于清除旧网格
+    private static List<PlacementMesh.CpuSection> build(PlacementMesh mesh, int generation, PlacementBlockAccessor accessor,
+                                                        List<Long> sectionKeys, boolean emitEmpty, BlockPos clientDelta,
+                                                        LayerRangeClip.Range range, Vec3 camera,
+                                                        WorldSchematic world, ClientLevel clientLevel) {
+        BlockPos min = accessor.minPos;
+        BlockPos max = accessor.maxPos;
 
         List<PlacementMesh.CpuSection> sections = new ArrayList<>();
         DetachedBlockView view = new DetachedBlockView(accessor, world, clientLevel);
@@ -232,15 +304,17 @@ public final class MeshSectionBuilder {
                             }
                         }
 
-                        layers.add(new PlacementMesh.CpuLayer(entry.getKey(), null, copy(meshData.vertexBuffer()),
-                                meshData.drawState().indexCount(), indices, sortState != null ? sortState.indexType() : null, sortState));
+                        ByteBuffer vertices = copy(meshData.vertexBuffer());
+                        layers.add(new PlacementMesh.CpuLayer(entry.getKey(), null, vertices,
+                                meshData.drawState().indexCount(), indices, sortState != null ? sortState.indexType() : null, sortState, hash(vertices)));
                         meshData.close();
                     }
                     for (Map.Entry<OverlayRenderType, BufferBuilder> entry : overlayBuilders.entrySet()) {
                         MeshData meshData = entry.getValue().build();
                         if (meshData != null) {
-                            layers.add(new PlacementMesh.CpuLayer(null, entry.getKey(), copy(meshData.vertexBuffer()),
-                                    meshData.drawState().indexCount(), null, null, null));
+                            ByteBuffer vertices = copy(meshData.vertexBuffer());
+                            layers.add(new PlacementMesh.CpuLayer(null, entry.getKey(), vertices,
+                                    meshData.drawState().indexCount(), null, null, null, hash(vertices)));
                             meshData.close();
                         }
                     }
@@ -252,7 +326,7 @@ public final class MeshSectionBuilder {
                 }
 
                 // 局部构建时空区段也要返回，用于清除旧网格；有方块但被裁空的区段保留记录
-                if (hasBlocks || !layers.isEmpty() || keys != null) {
+                if (hasBlocks || !layers.isEmpty() || emitEmpty) {
                     sections.add(new PlacementMesh.CpuSection(key, sectionOrigin, hasBlocks, clientEmpty, clip, layers, blockEntities.toLongArray()));
                 }
             }
@@ -299,5 +373,25 @@ public final class MeshSectionBuilder {
         copy.put(source.duplicate());
         copy.flip();
         return copy;
+    }
+
+    // 64 位内容哈希，用于判断重建后的网格是否与旧网格相同
+    private static long hash(ByteBuffer buffer) {
+        ByteBuffer b = buffer.duplicate().order(ByteOrder.LITTLE_ENDIAN);
+        int end = b.limit();
+        long h = 0x9E3779B97F4A7C15L ^ (b.remaining() * 0xC2B2AE3D27D4EB4FL);
+        int i = b.position();
+        for (; i + 8 <= end; i += 8) {
+            h ^= Long.rotateLeft(b.getLong(i) * 0xC2B2AE3D27D4EB4FL, 31) * 0x9E3779B97F4A7C15L;
+            h = Long.rotateLeft(h, 27) * 0x9E3779B97F4A7C15L + 0x85EBCA77C2B2AE63L;
+        }
+        for (; i < end; i++) {
+            h ^= (b.get(i) & 0xFFL) * 0x27D4EB2F165667C5L;
+            h = Long.rotateLeft(h, 11) * 0x9E3779B97F4A7C15L;
+        }
+        h ^= h >>> 33;
+        h *= 0xFF51AFD7ED558CCDL;
+        h ^= h >>> 33;
+        return h;
     }
 }

@@ -63,7 +63,7 @@ final class MeshUploader {
 
             PlacementMesh.BuiltPlacementBuffer full = mesh.uploadingFull;
             if (full != null) {
-                upload(full, budget);
+                upload(mesh, full, budget);
                 if (!full.isFullyUploaded()) continue;
                 activateFull(placement, mesh, full, blockEntityChunks);
                 MeshDebugGizmos.fullBuild(mesh.targetAccessor, placement.getOrigin().subtract(full.buildOrigin), true);
@@ -71,7 +71,7 @@ final class MeshUploader {
 
             PlacementMesh.BuiltPlacementBuffer partial;
             while ((partial = mesh.uploadingPartials.peek()) != null && budget.hasRemaining()) {
-                upload(partial, budget);
+                upload(mesh, partial, budget);
                 if (!partial.isFullyUploaded()) break;
                 mesh.uploadingPartials.poll();
                 PlacementBlockEntities.update(placement, mesh, partial, blockEntityChunks);
@@ -103,8 +103,9 @@ final class MeshUploader {
                                      Set<Long> blockEntityChunks) {
         LitematicaFastMove.LOGGER.debug("Detached placement mesh ready: {} sections (generation {})",
                 full.uploaded.size(), full.generation);
-        mesh.active.values().forEach(PlacementMesh.GpuSection::close);
+        mesh.active.values().forEach(section -> section.closeExcept(full.borrowed));
         mesh.active.clear();
+        full.borrowed.clear();
         mesh.clipRebuildPending.clear();
         for (PlacementMesh.GpuSection section : full.uploaded) {
             mesh.active.put(section.key(), section);
@@ -129,7 +130,7 @@ final class MeshUploader {
     private static void applyPartial(PlacementMesh mesh, PlacementMesh.BuiltPlacementBuffer partial) {
         for (long key : partial.keys) {
             PlacementMesh.GpuSection old = mesh.active.remove(key);
-            if (old != null) old.close();
+            if (old != null) old.closeExcept(partial.borrowed);
             mesh.clipRebuildPending.remove(key);
         }
         for (PlacementMesh.GpuSection section : partial.uploaded) {
@@ -140,16 +141,27 @@ final class MeshUploader {
             }
         }
         partial.uploaded.clear();
+        partial.borrowed.clear();
     }
 
-    private static void upload(PlacementMesh.BuiltPlacementBuffer buffer, Budget budget) {
+    private static void upload(PlacementMesh mesh, PlacementMesh.BuiltPlacementBuffer buffer, Budget budget) {
         GpuDevice device = RenderSystem.getDevice();
 
         while (budget.hasRemaining() && !buffer.isFullyUploaded()) {
             budget.usedAny = true;
             PlacementMesh.CpuSection section = buffer.pending.get(buffer.nextToUpload++);
+            PlacementMesh.GpuSection old = mesh.active.get(section.key());
             List<PlacementMesh.GpuLayer> layers = new ArrayList<>(section.layers().size());
             for (PlacementMesh.CpuLayer layer : section.layers()) {
+                PlacementMesh.GpuLayer same = findSameContent(old, layer);
+                if (same != null) {
+                    // 内容未变 (例如移动后重新对照，结果相同)：沿用旧 buffer，不重新创建
+                    buffer.borrowed.add(same);
+                    layers.add(same);
+                    layer.free();
+                    continue;
+                }
+
                 budget.bytes -= layer.vertices().remaining();
                 GpuBuffer vertexBuffer = device.createBuffer(() -> "litematicafastmove:placement_mesh",
                         GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_COPY_DST, layer.vertices());
@@ -161,12 +173,21 @@ final class MeshUploader {
                             GpuBuffer.USAGE_INDEX | GpuBuffer.USAGE_COPY_DST, layer.indices());
                     sort = new PlacementMesh.SortInfo(layer.sortState(), Double.NaN, Double.NaN, Double.NaN);
                 }
+                int vertexBytes = layer.vertices().remaining();
                 layer.free();
                 layers.add(new PlacementMesh.GpuLayer(layer.layer(), layer.overlay(), vertexBuffer, layer.indexCount(),
-                        indexBuffer, layer.indexType(), sort));
+                        indexBuffer, layer.indexType(), sort, vertexBytes, layer.hash()));
             }
             buffer.uploaded.add(new PlacementMesh.GpuSection(section.key(), section.origin(),
                     section.hasBlocks(), section.clientEmpty(), section.clip(), layers, section.blockEntities()));
         }
+    }
+
+    private static PlacementMesh.GpuLayer findSameContent(PlacementMesh.GpuSection old, PlacementMesh.CpuLayer layer) {
+        if (old == null) return null;
+        for (PlacementMesh.GpuLayer candidate : old.layers()) {
+            if (!candidate.vertexBuffer().isClosed() && candidate.sameContent(layer)) return candidate;
+        }
+        return null;
     }
 }

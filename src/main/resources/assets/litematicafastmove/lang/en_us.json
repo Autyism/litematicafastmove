@@ -47,5 +47,8 @@
   "litematicafastmove.config.comment.fastMoveDebugGizmos": "Draw fading boxes on placement mesh sections being processed.\nAmber = rebuild queued, green = rebuilt mesh applied, gray = skipped (real world air before and after), blue = full rebuild of the whole placement.",
   "litematicafastmove.config.name.fastMoveDebugGizmoDuration": "fastMoveDebugGizmoDuration",
   "litematicafastmove.config.prettyName.fastMoveDebugGizmoDuration": "Fast Move: Debug Gizmo Duration (ms)",
-  "litematicafastmove.config.comment.fastMoveDebugGizmoDuration": "How long each debug box stays visible while fading out."
+  "litematicafastmove.config.comment.fastMoveDebugGizmoDuration": "How long each debug box stays visible while fading out.",
+  "litematicafastmove.config.name.fastMoveBuildBatchSections": "fastMoveBuildBatchSections",
+  "litematicafastmove.config.prettyName.fastMoveBuildBatchSections": "Fast Move: Build Batch Size (sections)",
+  "litematicafastmove.config.comment.fastMoveBuildBatchSections": "Mesh builds are split into batches of this many 16x16x16 sections, nearest to the camera first, and spread over all builder threads.\nSmaller batches show results sooner; rebuilt sections appear batch by batch."
 }

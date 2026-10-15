@@ -47,5 +47,8 @@
   "litematicafastmove.config.comment.fastMoveDebugGizmos": "在正在处理的投影网格区段上画逐渐淡出的框。\n琥珀色 = 提交重建，绿色 = 重建结果生效，灰色 = 前后真实世界都是空气而跳过，蓝色 = 整个投影完整重建。",
   "litematicafastmove.config.name.fastMoveDebugGizmoDuration": "fastMoveDebugGizmoDuration",
   "litematicafastmove.config.prettyName.fastMoveDebugGizmoDuration": "Fast Move：调试框时长（毫秒）",
-  "litematicafastmove.config.comment.fastMoveDebugGizmoDuration": "每个调试框显示并淡出的时长。"
+  "litematicafastmove.config.comment.fastMoveDebugGizmoDuration": "每个调试框显示并淡出的时长。",
+  "litematicafastmove.config.name.fastMoveBuildBatchSections": "fastMoveBuildBatchSections",
+  "litematicafastmove.config.prettyName.fastMoveBuildBatchSections": "Fast Move：构建批次大小（区段）",
+  "litematicafastmove.config.comment.fastMoveBuildBatchSections": "网格构建按此数量的 16x16x16 区段分批，离相机近的先构建，并分散到所有构建线程。\n批次越小结果出现越早；局部重建会逐批生效。"
 }
