@@ -6,6 +6,8 @@
     "BlockModelCacheSchematicAccessor",
     "MixinBlockModelRendererSchematic",
     "MixinChunkRendererSchematicVbo",
+    "MixinClientLevel",
+    "MixinClientPacketListener",
     "MixinConfigs",
     "MixinFluidModelRendererSchematic",
     "MixinGuiConfigs",

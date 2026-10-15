@@ -80,14 +80,9 @@ public class PlacementBlockEntities {
     static void scheduleLitematicaChunks(Set<Long> chunks) {
         if (chunks.isEmpty()) return;
 
-        PlacementMeshManager.pushDirtySuppression();
-        try {
-            IWorldSchematicRenderer renderer = LitematicaRenderer.getInstance().getWorldRenderer();
-            for (long packed : chunks) {
-                renderer.scheduleChunkRenders(ChunkPos.getX(packed), ChunkPos.getZ(packed), false);
-            }
-        } finally {
-            PlacementMeshManager.popDirtySuppression();
+        IWorldSchematicRenderer renderer = LitematicaRenderer.getInstance().getWorldRenderer();
+        for (long packed : chunks) {
+            renderer.scheduleChunkRenders(ChunkPos.getX(packed), ChunkPos.getZ(packed), false);
         }
     }
 

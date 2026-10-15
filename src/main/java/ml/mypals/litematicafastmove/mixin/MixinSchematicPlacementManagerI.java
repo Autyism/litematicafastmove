@@ -71,6 +71,8 @@ public abstract class MixinSchematicPlacementManagerI implements IFastMoveManage
 
         if (!pureTranslation) {
             PlacementMeshManager.requestBuild(placement);
+        } else {
+            PlacementMeshManager.markPlacementDirty(placement);
         }
     }
 
@@ -126,6 +128,7 @@ public abstract class MixinSchematicPlacementManagerI implements IFastMoveManage
         }
 
         this.litematicafastmove$rebuildSkipped();
+        PlacementMeshManager.markPlacementDirty(placement);
     }
 
     @Override

@@ -27,9 +27,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 public final class PlacementMeshManager {
     private static final Map<SchematicPlacement, PlacementMesh> MESHES = new ConcurrentHashMap<>();
     private static final Set<Long> DIRTY_CHUNKS = ConcurrentHashMap.newKeySet();
+    private static final Set<Long> DIRTY_BLOCKS = ConcurrentHashMap.newKeySet();
+    private static final Set<SchematicPlacement> DIRTY_PLACEMENTS = ConcurrentHashMap.newKeySet();
     private static final AtomicInteger GENERATION = new AtomicInteger();
 
-    private static int dirtySuppression;
 
     private PlacementMeshManager() {}
 
@@ -139,29 +140,39 @@ public final class PlacementMeshManager {
         }
     }
 
+    /**
+     * 真实世界单个方块变化时只重建包含它及相邻一格的区段
+     */
+    public static void markBlockDirty(BlockPos pos) {
+        if (!MESHES.isEmpty()) {
+            DIRTY_BLOCKS.add(pos.asLong());
+        }
+    }
+
+    /**
+     * 真实世界区块加载，整列都变化
+     */
     public static void markChunkDirty(int chunkX, int chunkZ) {
-        if (!MESHES.isEmpty() && dirtySuppression == 0) {
+        if (!MESHES.isEmpty()) {
             DIRTY_CHUNKS.add(ChunkPos.pack(chunkX, chunkZ));
         }
     }
 
-    // 层范围变化或者方块实体刷新时屏蔽重绘，让独立的网格自己按区段处理，不需要跟着重建
-    public static void pushDirtySuppression() {
-        dirtySuppression++;
-    }
-
-    public static void popDirtySuppression() {
-        dirtySuppression = Math.max(0, dirtySuppression - 1);
-    }
-
     /**
-     * Dirty区块送至对应投影处理
+     * 投影移到新位置，全部区段按新位置重新对照，前后都是空气的区段会被跳过
      */
-    public static void processDirtyChunks() {
-        if (DIRTY_CHUNKS.isEmpty()) return;
+    public static void markPlacementDirty(SchematicPlacement placement) {
+        if (placement != null && MESHES.containsKey(placement)) {
+            DIRTY_PLACEMENTS.add(placement);
+        }
+    }
 
-        List<Long> dirty = new ArrayList<>(DIRTY_CHUNKS);
-        dirty.forEach(DIRTY_CHUNKS::remove);
+    public static void processDirty() {
+        if (DIRTY_CHUNKS.isEmpty() && DIRTY_BLOCKS.isEmpty() && DIRTY_PLACEMENTS.isEmpty()) return;
+
+        List<Long> chunks = drain(DIRTY_CHUNKS);
+        List<Long> blocks = drain(DIRTY_BLOCKS);
+        List<SchematicPlacement> placements = drain(DIRTY_PLACEMENTS);
 
         for (Map.Entry<SchematicPlacement, PlacementMesh> entry : MESHES.entrySet()) {
             SchematicPlacement placement = entry.getKey();
@@ -171,7 +182,9 @@ public final class PlacementMeshManager {
             if (accessor == null || buildOrigin == null) continue;
 
             BlockPos delta = placement.getOrigin().subtract(buildOrigin);
-            Set<Long> keys = sectionsInChunks(accessor, dirty, delta);//你好你的脏区块到货了
+            Set<Long> keys = placements.contains(placement) ? allSections(accessor) : new HashSet<>();
+            addSectionsInChunks(accessor, chunks, delta, keys);
+            addSectionsAroundBlocks(accessor, blocks, delta, keys);
             skipStillEmptySections(mesh, accessor, keys, delta);
 
             if (!keys.isEmpty()) {
@@ -180,10 +193,29 @@ public final class PlacementMeshManager {
         }
     }
 
-    private static Set<Long> sectionsInChunks(PlacementBlockAccessor accessor, List<Long> chunks, BlockPos delta) {
+    private static <T> List<T> drain(Set<T> set) {
+        List<T> drained = new ArrayList<>(set);
+        drained.forEach(set::remove);
+        return drained;
+    }
+
+    private static Set<Long> allSections(PlacementBlockAccessor accessor) {
         BlockPos min = accessor.minPos;
         BlockPos max = accessor.maxPos;
         Set<Long> keys = new HashSet<>();
+        for (int sx = min.getX() >> 4; sx <= max.getX() >> 4; sx++) {
+            for (int sz = min.getZ() >> 4; sz <= max.getZ() >> 4; sz++) {
+                for (int sy = min.getY() >> 4; sy <= max.getY() >> 4; sy++) {
+                    keys.add(SectionPos.asLong(sx, sy, sz));
+                }
+            }
+        }
+        return keys;
+    }
+
+    private static void addSectionsInChunks(PlacementBlockAccessor accessor, List<Long> chunks, BlockPos delta, Set<Long> keys) {
+        BlockPos min = accessor.minPos;
+        BlockPos max = accessor.maxPos;
 
         for (long packed : chunks) {
             ChunkPos chunk = ChunkPos.unpack(packed);
@@ -201,7 +233,30 @@ public final class PlacementMeshManager {
                 }
             }
         }
-        return keys;
+    }
+
+    // overlay 判断边线与面时会看相邻一格的真实方块，所以变化位置周围一格所在的区段都要重建
+    private static void addSectionsAroundBlocks(PlacementBlockAccessor accessor, List<Long> blocks, BlockPos delta, Set<Long> keys) {
+        BlockPos min = accessor.minPos;
+        BlockPos max = accessor.maxPos;
+
+        for (long packed : blocks) {
+            int bx = BlockPos.getX(packed) - delta.getX();
+            int by = BlockPos.getY(packed) - delta.getY();
+            int bz = BlockPos.getZ(packed) - delta.getZ();
+            int x0 = Math.max(bx - 1, min.getX()), x1 = Math.min(bx + 1, max.getX());
+            int y0 = Math.max(by - 1, min.getY()), y1 = Math.min(by + 1, max.getY());
+            int z0 = Math.max(bz - 1, min.getZ()), z1 = Math.min(bz + 1, max.getZ());
+            if (x0 > x1 || y0 > y1 || z0 > z1) continue;
+
+            for (int sx = x0 >> 4; sx <= x1 >> 4; sx++) {
+                for (int sy = y0 >> 4; sy <= y1 >> 4; sy++) {
+                    for (int sz = z0 >> 4; sz <= z1 >> 4; sz++) {
+                        keys.add(SectionPos.asLong(sx, sy, sz));
+                    }
+                }
+            }
+        }
     }
 
     /**

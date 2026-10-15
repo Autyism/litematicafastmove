@@ -96,11 +96,6 @@ public class MixinWorldRendererSchematic {
         PlacementMeshRenderer.captureFrustum(frustum);
     }
 
-    @Inject(method = "scheduleChunkRenders", at = @At("HEAD"))
-    private void onScheduleChunkRenders(int chunkX, int chunkZ, boolean immediate, CallbackInfo ci) {
-        PlacementMeshManager.markChunkDirty(chunkX, chunkZ);
-    }
-
     @Inject(method = "loadRenderers", at = @At("RETURN"))
     private void onLoadRenderers(ProfilerFiller profiler, CallbackInfo ci) {
         PlacementMeshManager.rebuildAll();

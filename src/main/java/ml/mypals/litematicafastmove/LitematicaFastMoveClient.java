@@ -20,7 +20,7 @@ public class LitematicaFastMoveClient implements ClientModInitializer {
             if (manager == null) return;
             ((IFastMoveManager) manager).litematicafastmove$commitSettled(System.currentTimeMillis());
 
-            PlacementMeshManager.processDirtyChunks();
+            PlacementMeshManager.processDirty();
             MeshDebugGizmos.flush();
 
             if (++ticks % 10 == 0) {
