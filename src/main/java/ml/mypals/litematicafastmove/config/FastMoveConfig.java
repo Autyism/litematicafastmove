@@ -13,6 +13,24 @@ public class FastMoveConfig {
     public static boolean ENABLE_ASYNC_VERIFY = true;
     public static long COMMIT_DELAY_MS = 1500;
     public static double MOVE_SMOOTHING_MS = 60;
+    // 单次位移超过此距离 (格) 时不插值，直接瞬移
+    public static double MOVE_SNAP_DISTANCE = 128.0;
+
+    // 每帧预算 (渲染线程)
+    // 网格上传 (创建 GPU buffer)：字节数与耗时，任一用尽即停，剩余留到下一帧
+    public static long UPLOAD_BYTES_PER_FRAME = 8L * 1024 * 1024;
+    public static double UPLOAD_MILLIS_PER_FRAME = 3.0;
+    // 半透明区段重新排序：每帧最多提交的数量，及触发重新排序的相机移动距离 (格)
+    public static int TRANSLUCENT_RESORTS_PER_FRAME = 32;
+    public static double TRANSLUCENT_RESORT_DISTANCE = 1.0;
+
+    // 每 tick 预算 (主线程)
+    // 校验结果合并：从 tick 开始算起的时间上限 (毫秒)
+    public static long VERIFIER_MERGE_MILLIS_PER_TICK = 50;
+
+    // 线程数 (启动时读取，修改后需重启)
+    public static int MESH_BUILDER_THREADS = Math.max(1, Runtime.getRuntime().availableProcessors() / 4);
+    public static int VERIFIER_THREADS = Math.max(1, Runtime.getRuntime().availableProcessors() - 1);
 
     public static boolean isRenderTakenOver(SchematicPlacement placement) {
         if (!ENABLE_FAST_MOVE || placement == null) return false;

@@ -13,7 +13,6 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class MoveInterpolator {
-    private static final double SNAP_DISTANCE = 128.0;
     private static final double EPSILON = 1.0E-3;
 
     private static final Map<SchematicPlacement, double[]> DISPLAYED
@@ -34,7 +33,7 @@ public final class MoveInterpolator {
             double dy = target.getY() - displayed[1];
             double dz = target.getZ() - displayed[2];
 
-            if (alpha >= 1.0 || dx * dx + dy * dy + dz * dz > SNAP_DISTANCE * SNAP_DISTANCE) {
+            if (alpha >= 1.0 || dx * dx + dy * dy + dz * dz > FastMoveConfig.MOVE_SNAP_DISTANCE * FastMoveConfig.MOVE_SNAP_DISTANCE) {
                 displayed[0] = target.getX();
                 displayed[1] = target.getY();
                 displayed[2] = target.getZ();

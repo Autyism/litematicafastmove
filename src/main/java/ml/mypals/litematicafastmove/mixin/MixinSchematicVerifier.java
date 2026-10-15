@@ -1,5 +1,6 @@
 package ml.mypals.litematicafastmove.mixin;
 
+import com.google.common.collect.ArrayListMultimap;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import fi.dy.masa.litematica.data.DataManager;
@@ -7,6 +8,7 @@ import fi.dy.masa.litematica.scheduler.tasks.TaskBase;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.schematic.verifier.SchematicVerifier;
 import fi.dy.masa.litematica.util.BlockInfoListType;
+import fi.dy.masa.litematica.util.IgnoreBlockRegistry;
 import fi.dy.masa.litematica.util.ItemUtils;
 import fi.dy.masa.litematica.util.WorldUtils;
 import fi.dy.masa.litematica.world.WorldSchematic;
@@ -14,6 +16,7 @@ import fi.dy.masa.malilib.util.position.IntBoundingBox;
 import fi.dy.masa.malilib.util.position.LayerRange;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
+import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
 import ml.mypals.litematicafastmove.access.PlacementAccessorRegistry;
 import ml.mypals.litematicafastmove.access.PlacementBlockAccessor;
 import ml.mypals.litematicafastmove.config.FastMoveConfig;
@@ -24,6 +27,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.util.profiling.ProfilerFiller;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.state.BlockState;
+import org.apache.commons.lang3.tuple.Pair;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -34,13 +38,20 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
 @Mixin(value = SchematicVerifier.class, remap = false)
 public abstract class MixinSchematicVerifier extends TaskBase {
-    @Unique private static final long TICK_BUDGET_NANOS = 50_000_000L;
 
+    @Shadow @Final private ArrayListMultimap<Pair<BlockState, BlockState>, BlockPos> missingBlocksPositions;
+    @Shadow @Final private ArrayListMultimap<Pair<BlockState, BlockState>, BlockPos> extraBlocksPositions;
+    @Shadow @Final private ArrayListMultimap<Pair<BlockState, BlockState>, BlockPos> wrongBlocksPositions;
+    @Shadow @Final private ArrayListMultimap<Pair<BlockState, BlockState>, BlockPos> wrongStatesPositions;
+    @Shadow @Final private ArrayListMultimap<Pair<BlockState, BlockState>, BlockPos> diffBlocksPositions;
+    @Shadow @Final private Object2ObjectOpenHashMap<BlockPos, SchematicVerifier.BlockMismatch> blockMismatches;
+    @Shadow @Final private HashSet<Pair<BlockState, BlockState>> ignoredMismatches;
     @Shadow @Final private Object2IntOpenHashMap<BlockState> correctStateCounts;
     @Shadow @Final private Set<ChunkPos> requiredChunks;
     @Shadow private ClientLevel worldClient;
@@ -51,8 +62,8 @@ public abstract class MixinSchematicVerifier extends TaskBase {
     @Shadow private int schematicBlocks;
     @Shadow private int clientBlocks;
     @Shadow private int correctStatesCount;
+    @Shadow private IgnoreBlockRegistry ignoreBlockRegistry;
 
-    @Shadow private void checkBlockStates(int x, int y, int z, BlockState stateSchematic, BlockState stateClient) {}
     @Shadow public abstract void updateRequiredChunksStringList();
 
     @Unique private AsyncSchematicVerifier.Session litematicafastmove$session;
@@ -73,7 +84,8 @@ public abstract class MixinSchematicVerifier extends TaskBase {
         AsyncSchematicVerifier.Session session = this.litematicafastmove$session;
         if (session == null || session.placement != this.schematicPlacement) {
             if (session != null) session.cancel();
-            session = this.litematicafastmove$session = new AsyncSchematicVerifier.Session(this.schematicPlacement);
+            session = this.litematicafastmove$session = new AsyncSchematicVerifier.Session(
+                    this.schematicPlacement, this.ignoreBlockRegistry, this.ignoredMismatches);
         }
 
         this.litematicafastmove$submitReadyChunks(session);
@@ -101,16 +113,7 @@ public abstract class MixinSchematicVerifier extends TaskBase {
 
         for (ChunkPos pos : this.requiredChunks) {
             if (session.isSubmitted(pos)) continue;
-            boolean loaded = true;
-            for (int cx = pos.x() - 1; cx <= pos.x() + 1 && loaded; ++cx) {
-                for (int cz = pos.z() - 1; cz <= pos.z() + 1; ++cz) {
-                    if (!WorldUtils.isClientChunkLoaded(this.worldClient, cx, cz)) {
-                        loaded = false;
-                        break;
-                    }
-                }
-            }
-            if (!loaded) continue;
+            if (!WorldUtils.isClientChunkLoaded(this.worldClient, pos.x(), pos.z())) continue;
 
             List<IntBoundingBox> boxes = new ArrayList<>();
             for (IntBoundingBox box : this.schematicPlacement.getBoxesWithinChunk(pos.x(), pos.z()).values()) {
@@ -138,52 +141,66 @@ public abstract class MixinSchematicVerifier extends TaskBase {
     }
 
     /**
-     * 在本 tick 剩余预算内合并扫描结果：计数直接累加，不同的位置逐条交给原版 checkBlockStates 分类
-     * (保留忽略列表、作物年龄等原版规则)
+     * 在本 tick 剩余预算内合并扫描结果：工作线程已完成判定并按 (类型, 期望 -> 实际) 分组，
+     * 这里只做批量写入；扫描期间新加入忽略列表的组在写入前跳过
      */
     @Unique
     private boolean litematicafastmove$mergeResults(AsyncSchematicVerifier.Session session) {
-        long deadline = DataManager.getClientTickStartTime() + TICK_BUDGET_NANOS;
+        long deadline = DataManager.getClientTickStartTime() + FastMoveConfig.VERIFIER_MERGE_MILLIS_PER_TICK * 1_000_000L;
         boolean changed = false;
 
         while (System.nanoTime() < deadline) {
-            if (session.merging == null) {
-                AsyncSchematicVerifier.ChunkResult result = session.pollCompleted();
-                if (result == null) break;
+            AsyncSchematicVerifier.ChunkResult result = session.pollCompleted();
+            if (result == null) break;
 
-                BlockPos itemPos = new BlockPos(result.pos().getMinBlockX(), 0, result.pos().getMinBlockZ());
-                for (Object2IntMap.Entry<BlockState> entry : result.correctCounts().object2IntEntrySet()) {
-                    this.correctStateCounts.addTo(entry.getKey(), entry.getIntValue());
-                    ItemUtils.setItemForBlock(this.worldClient, itemPos, entry.getKey());
+            BlockPos itemPos = new BlockPos(result.pos().getMinBlockX(), 0, result.pos().getMinBlockZ());
+            for (Object2IntMap.Entry<BlockState> entry : result.correctCounts().object2IntEntrySet()) {
+                this.correctStateCounts.addTo(entry.getKey(), entry.getIntValue());
+                ItemUtils.setItemForBlock(this.worldClient, itemPos, entry.getKey());
+            }
+            this.correctStatesCount += result.correctNonAir();
+            this.schematicBlocks += result.schematicBlocks();
+            this.clientBlocks += result.clientBlocks();
+
+            for (var typeEntry : result.mismatches().entrySet()) {
+                ArrayListMultimap<Pair<BlockState, BlockState>, BlockPos> map = this.litematicafastmove$getMap(typeEntry.getKey());
+                if (map == null) continue;
+
+                for (var groupEntry : typeEntry.getValue().entrySet()) {
+                    if (this.ignoredMismatches.contains(groupEntry.getKey())) continue;
+
+                    AsyncSchematicVerifier.MismatchGroup group = groupEntry.getValue();
+                    map.putAll(groupEntry.getKey(), group.positions());
+                    for (BlockPos pos : group.positions()) {
+                        this.blockMismatches.put(pos, group.mismatch());
+                    }
+                    ItemUtils.setItemForBlock(this.worldClient, itemPos, group.mismatch().stateFound());
                 }
-                this.correctStatesCount += result.correctNonAir();
-                this.schematicBlocks += result.schematicBlocks();
-                this.clientBlocks += result.clientBlocks();
-
-                session.merging = result;
-                session.mergeIndex = 0;
             }
 
-            AsyncSchematicVerifier.ChunkResult result = session.merging;
-            long[] positions = result.mismatchPositions();
-            int i = session.mergeIndex;
-
-            while (i < positions.length) {
-                long packed = positions[i];
-                this.checkBlockStates(BlockPos.getX(packed), BlockPos.getY(packed), BlockPos.getZ(packed), result.expected()[i], result.found()[i]);
-                i++;
-                if ((i & 255) == 0 && System.nanoTime() >= deadline) break;
+            if (this.worldSchematic != null) {
+                for (BlockState state : result.schematicMismatchStates()) {
+                    ItemUtils.setItemForBlock(this.worldSchematic, itemPos, state);
+                }
             }
 
-            session.mergeIndex = i;
-            if (i >= positions.length) {
-                this.requiredChunks.remove(result.pos());
-                session.merging = null;
-                changed = true;
-            }
+            this.requiredChunks.remove(result.pos());
+            changed = true;
         }
 
         return changed;
+    }
+
+    @Unique
+    private ArrayListMultimap<Pair<BlockState, BlockState>, BlockPos> litematicafastmove$getMap(SchematicVerifier.MismatchType type) {
+        return switch (type) {
+            case MISSING -> this.missingBlocksPositions;
+            case EXTRA -> this.extraBlocksPositions;
+            case WRONG_BLOCK -> this.wrongBlocksPositions;
+            case WRONG_STATE -> this.wrongStatesPositions;
+            case DIFF_BLOCK -> this.diffBlocksPositions;
+            default -> null;
+        };
     }
 
     @Inject(method = "reset", at = @At("HEAD"))

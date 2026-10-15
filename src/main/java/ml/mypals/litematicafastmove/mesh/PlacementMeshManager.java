@@ -89,15 +89,21 @@ public final class PlacementMeshManager {
     }
 
     private static final ExecutorService BUILDER = Executors.newFixedThreadPool(
-            Math.max(1, Runtime.getRuntime().availableProcessors() / 4), MeshBuilderThread::new);
+            Math.max(1, FastMoveConfig.MESH_BUILDER_THREADS), MeshBuilderThread::new);
     private static final ExecutorService SORTER = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "LFMTranslucentSorter");
         t.setDaemon(true);
         return t;
     });
-    private static final long UPLOAD_BUDGET_BYTES = 24L * 1024 * 1024;
-    private static final int RESORTS_PER_FRAME = 32;
-    private static final double RESORT_DISTANCE_SQ = 1.0;
+    private static final class UploadBudget {
+        long bytes = FastMoveConfig.UPLOAD_BYTES_PER_FRAME;
+        final long deadline = System.nanoTime() + (long) (FastMoveConfig.UPLOAD_MILLIS_PER_FRAME * 1_000_000L);
+        boolean usedAny;
+
+        boolean hasRemaining() {
+            return !this.usedAny || (this.bytes > 0 && System.nanoTime() < this.deadline);
+        }
+    }
 
     private record Completed(PlacementMesh mesh, PlacementMesh.BuiltPlacementBuffer builtPlacementBuffer) {}
     private record Resorted(PlacementMesh.GpuLayer layer, ByteBuffer indices, double x, double y, double z) {}
@@ -269,11 +275,37 @@ public final class PlacementMeshManager {
 
             BlockPos delta = placement.getOrigin().subtract(buildOrigin);
             Set<Long> keys = getKeys(accessor, dirty, delta);
+            skipStillEmptySections(mesh, accessor, keys, delta);
 
             if (!keys.isEmpty()) {
                 requestPartialBuild(placement, mesh, keys);
             }
         }
+    }
+
+    private static void skipStillEmptySections(PlacementMesh mesh, PlacementBlockAccessor accessor, Set<Long> keys, BlockPos delta) {
+        if (keys.isEmpty() || mesh.uploadingFull != null || !mesh.deferredPartials.isEmpty() || !mesh.uploadingPartials.isEmpty() ||
+            mesh.activeBuildOrigin == null || !mesh.activeBuildOrigin.equals(mesh.targetBuildOrigin)) return;
+
+        ClientLevel clientLevel = Minecraft.getInstance().level;
+        if (clientLevel == null) return;
+
+        keys.removeIf(key -> {
+            PlacementMesh.GpuSection section = mesh.active.get(key);
+            // 不在 active 中的区段既没有投影方块也没有网格，只有真实世界出现方块 (多余方块 overlay) 时才需要构建
+            boolean wasEmpty = section == null || section.clientEmpty();
+            return wasEmpty && isSectionClientRegionEmpty(clientLevel, accessor.minPos, accessor.maxPos, key, delta);
+        });
+    }
+
+    private static boolean isSectionClientRegionEmpty(ClientLevel level, BlockPos min, BlockPos max, long key, BlockPos delta) {
+        int sx = SectionPos.x(key), sy = SectionPos.y(key), sz = SectionPos.z(key);
+        int x0 = Math.max(sx << 4, min.getX()) - 1, x1 = Math.min((sx << 4) + 15, max.getX()) + 1;
+        int y0 = Math.max(sy << 4, min.getY()) - 1, y1 = Math.min((sy << 4) + 15, max.getY()) + 1;
+        int z0 = Math.max(sz << 4, min.getZ()) - 1, z1 = Math.min((sz << 4) + 15, max.getZ()) + 1;
+        if (x0 > x1 || y0 > y1 || z0 > z1) return true;
+        return isClientRegionEmpty(level, x0 + delta.getX(), y0 + delta.getY(), z0 + delta.getZ(),
+                x1 + delta.getX(), y1 + delta.getY(), z1 + delta.getZ());
     }
 
     private static @NonNull Set<Long> getKeys(PlacementBlockAccessor accessor, List<Long> dirty, BlockPos delta) {
@@ -408,10 +440,9 @@ public final class PlacementMeshManager {
                 boolean hasSchematicBlocks = view.loadSection(sx, sy, sz);
                 boolean hasBlocks = view.hasUnclippedBlocks();
                 boolean clippedAway = clip != null && clip.isEmpty();
+                boolean clientEmpty = isSectionClientRegionEmpty(clientLevel, min, max, key, clientDelta);
                 // 投影这里全是空气时只可能出现 overlay 的"多余方块"，客户端对应区域也为空就跳过
-                boolean scan = !clippedAway && (hasSchematicBlocks || (overlay != null && x0 <= x1 && y0 <= y1 && z0 <= z1 &&
-                        !isClientRegionEmpty(clientLevel, x0 + clientDelta.getX(), y0 + clientDelta.getY(), z0 + clientDelta.getZ(),
-                                x1 + clientDelta.getX(), y1 + clientDelta.getY(), z1 + clientDelta.getZ())));
+                boolean scan = !clippedAway && (hasSchematicBlocks || (overlay != null && !clientEmpty));
 
                 if (scan) {
                     for (int y = y0; y <= y1; y++) {
@@ -489,7 +520,7 @@ public final class PlacementMeshManager {
 
                 // 局部构建时空区段也要返回，用于清除旧网格；有方块但被裁空的区段保留记录
                 if (hasBlocks || !layers.isEmpty() || keys != null) {
-                    sections.add(new PlacementMesh.CpuSection(key, sectionOrigin, hasBlocks, clip, layers));
+                    sections.add(new PlacementMesh.CpuSection(key, sectionOrigin, hasBlocks, clientEmpty, clip, layers));
                 }
             }
         } finally {
@@ -573,41 +604,51 @@ public final class PlacementMeshManager {
                 }
                 mesh.uploadingFull = builtPlacementBuffer;
             } else if (mesh.uploadingFull == null && mesh.activeGeneration == builtPlacementBuffer.generation) {
-                applyPartial(mesh, builtPlacementBuffer);
+                mesh.uploadingPartials.add(builtPlacementBuffer);
             } else {
                 mesh.deferredPartials.add(builtPlacementBuffer);
             }
         }
 
-        long budget = UPLOAD_BUDGET_BYTES;
+        UploadBudget budget = new UploadBudget();
 
         for (PlacementMesh mesh : MESHES.values()) {
-            PlacementMesh.BuiltPlacementBuffer builtPlacementBuffer = mesh.uploadingFull;
-            if (builtPlacementBuffer == null) continue;
+            if (!budget.hasRemaining()) break;
 
-            budget = upload(builtPlacementBuffer, budget);
+            PlacementMesh.BuiltPlacementBuffer full = mesh.uploadingFull;
+            if (full != null) {
+                upload(full, budget);
+                if (!full.isFullyUploaded()) continue;
 
-            if (builtPlacementBuffer.isFullyUploaded()) {
                 LitematicaFastMove.LOGGER.debug("Detached placement mesh ready: {} sections (generation {})",
-                        builtPlacementBuffer.uploaded.size(), builtPlacementBuffer.generation);
+                        full.uploaded.size(), full.generation);
                 mesh.active.values().forEach(PlacementMesh.GpuSection::close);
                 mesh.active.clear();
                 mesh.clipRebuildPending.clear();
-                for (PlacementMesh.GpuSection section : builtPlacementBuffer.uploaded) {
+                for (PlacementMesh.GpuSection section : full.uploaded) {
                     mesh.active.put(section.key(), section);
                 }
-                mesh.activeGeneration = builtPlacementBuffer.generation;
-                mesh.activeBuildOrigin = builtPlacementBuffer.buildOrigin;
+                mesh.activeGeneration = full.generation;
+                mesh.activeBuildOrigin = full.buildOrigin;
                 mesh.uploadingFull = null;
 
+                mesh.uploadingPartials.forEach(PlacementMesh.BuiltPlacementBuffer::discard);
+                mesh.uploadingPartials.clear();
                 for (PlacementMesh.BuiltPlacementBuffer partial : mesh.deferredPartials) {
                     if (partial.generation == mesh.activeGeneration) {
-                        applyPartial(mesh, partial);
+                        mesh.uploadingPartials.add(partial);
                     } else {
                         partial.discard();
                     }
                 }
                 mesh.deferredPartials.clear();
+            }
+            PlacementMesh.BuiltPlacementBuffer partial;
+            while ((partial = mesh.uploadingPartials.peek()) != null && budget.hasRemaining()) {
+                upload(partial, budget);
+                if (!partial.isFullyUploaded()) break;
+                mesh.uploadingPartials.poll();
+                applyPartial(mesh, partial);
             }
         }
 
@@ -626,7 +667,6 @@ public final class PlacementMeshManager {
     }
 
     private static void applyPartial(PlacementMesh mesh, PlacementMesh.BuiltPlacementBuffer builtPlacementBuffer) {
-        upload(builtPlacementBuffer, Long.MAX_VALUE);
         for (long key : builtPlacementBuffer.keys) {
             PlacementMesh.GpuSection old = mesh.active.remove(key);
             if (old != null) old.close();
@@ -642,20 +682,21 @@ public final class PlacementMeshManager {
         builtPlacementBuffer.uploaded.clear();
     }
 
-    private static long upload(PlacementMesh.BuiltPlacementBuffer builtPlacementBuffer, long budget) {
+    private static void upload(PlacementMesh.BuiltPlacementBuffer builtPlacementBuffer, UploadBudget budget) {
         GpuDevice device = RenderSystem.getDevice();
 
-        while (budget > 0 && !builtPlacementBuffer.isFullyUploaded()) {
+        while (budget.hasRemaining() && !builtPlacementBuffer.isFullyUploaded()) {
+            budget.usedAny = true;
             PlacementMesh.CpuSection section = builtPlacementBuffer.pending.get(builtPlacementBuffer.nextToUpload++);
             List<PlacementMesh.GpuLayer> layers = new ArrayList<>(section.layers().size());
             for (PlacementMesh.CpuLayer layer : section.layers()) {
-                budget -= layer.vertices().remaining();
+                budget.bytes -= layer.vertices().remaining();
                 GpuBuffer vertexBuffer = device.createBuffer(() -> "litematicafastmove:placement_mesh",
                         GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_COPY_DST, layer.vertices());
                 GpuBuffer indexBuffer = null;
                 PlacementMesh.SortInfo sort = null;
                 if (layer.indices() != null) {
-                    budget -= layer.indices().remaining();
+                    budget.bytes -= layer.indices().remaining();
                     indexBuffer = device.createBuffer(() -> "litematicafastmove:placement_mesh_indices",
                             GpuBuffer.USAGE_INDEX | GpuBuffer.USAGE_COPY_DST, layer.indices());
                     sort = new PlacementMesh.SortInfo(layer.sortState(), Double.NaN, Double.NaN, Double.NaN);
@@ -665,10 +706,8 @@ public final class PlacementMeshManager {
                         indexBuffer, layer.indexType(), sort));
             }
             builtPlacementBuffer.uploaded.add(new PlacementMesh.GpuSection(section.key(), section.origin(),
-                    section.hasBlocks(), section.clip(), layers));
+                    section.hasBlocks(), section.clientEmpty(), section.clip(), layers));
         }
-
-        return budget;
     }
 
     private static void scheduleResort(PlacementMesh.GpuLayer layer, double x, double y, double z) {
@@ -692,10 +731,6 @@ public final class PlacementMeshManager {
         void visit(PlacementMesh.GpuSection section, double ox, double oy, double oz);
     }
 
-    /**
-     * 遍历本帧可见的区段：层范围裁剪、距离剔除、视锥剔除 (投影整体 AABB + 区段 AABB)。
-     * 层范围要求的裁剪与区段构建时不同时，提交该区段的局部重建 (移动推迟期间不提交)，重建完成前沿用旧网格。
-     */
     private static void forEachVisibleSection(double cameraX, double cameraY, double cameraZ, boolean requestClipRebuilds, SectionVisitor visitor) {
         RangeSnapshot range = snapshotRange();
         Frustum fr = frustum;
@@ -762,7 +797,7 @@ public final class PlacementMeshManager {
         MoveInterpolator.update();
 
         boolean[] added = {false};
-        int[] resortBudget = {RESORTS_PER_FRAME};
+        int[] resortBudget = {FastMoveConfig.TRANSLUCENT_RESORTS_PER_FRAME};
         List<TranslucentDraw> translucentDraws = new ArrayList<>();
 
         forEachVisibleSection(cameraX, cameraY, cameraZ, true, (section, ox, oy, oz) -> {
@@ -776,7 +811,8 @@ public final class PlacementMeshManager {
                     double rx = -ox, ry = -oy, rz = -oz; // 相机相对区段原点
                     double dx = rx - sort.lastX, dy = ry - sort.lastY, dz = rz - sort.lastZ;
                     if (!sort.pending && resortBudget[0] > 0 &&
-                        (Double.isNaN(sort.lastX) || dx * dx + dy * dy + dz * dz > RESORT_DISTANCE_SQ)) {
+                        (Double.isNaN(sort.lastX) || dx * dx + dy * dy + dz * dz >
+                         FastMoveConfig.TRANSLUCENT_RESORT_DISTANCE * FastMoveConfig.TRANSLUCENT_RESORT_DISTANCE)) {
                         resortBudget[0]--;
                         scheduleResort(layer, rx, ry, rz);
                     }
@@ -789,7 +825,6 @@ public final class PlacementMeshManager {
             }
         });
 
-        // 半透明从近到远追加；Litematica 绘制半透明层时会整体倒序，变为从远到近
         translucentDraws.sort(Comparator.comparingDouble(TranslucentDraw::distanceSq));
         for (TranslucentDraw draw : translucentDraws) {
             addDraw(renderMap, transforms, modelView, colorModulator, textureMatrix, maxIndexCount, draw.layer(), draw.offset());

@@ -11,6 +11,7 @@ import net.minecraft.core.Direction;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -36,7 +37,8 @@ final class PlacementMesh {
             }
         }
     }
-    record CpuSection(long key, BlockPos origin, boolean hasBlocks, Clip clip, List<CpuLayer> layers) {}
+    // clientEmpty：构建时对应的真实世界区域 (外扩 1 格) 全是空气
+    record CpuSection(long key, BlockPos origin, boolean hasBlocks, boolean clientEmpty, Clip clip, List<CpuLayer> layers) {}
 
     static final class SortInfo {
         final MeshData.SortState state;
@@ -61,7 +63,7 @@ final class PlacementMesh {
         }
     }
     // hasBlocks：区段内有投影方块，即使被层范围裁空也保留，范围变化时据此判断是否重建
-    record GpuSection(long key, BlockPos origin, boolean hasBlocks, Clip clip, List<GpuLayer> layers) {
+    record GpuSection(long key, BlockPos origin, boolean hasBlocks, boolean clientEmpty, Clip clip, List<GpuLayer> layers) {
         void close() {
             for (GpuLayer layer : this.layers) {
                 layer.close();
@@ -113,6 +115,7 @@ final class PlacementMesh {
     BlockPos activeBuildOrigin;
     BuiltPlacementBuffer uploadingFull;
     final List<BuiltPlacementBuffer> deferredPartials = new ArrayList<>();
+    final ArrayDeque<BuiltPlacementBuffer> uploadingPartials = new ArrayDeque<>();
     final Set<Long> clipRebuildPending = new HashSet<>();
 
     void close() {
@@ -124,6 +127,8 @@ final class PlacementMesh {
         }
         this.deferredPartials.forEach(BuiltPlacementBuffer::discard);
         this.deferredPartials.clear();
+        this.uploadingPartials.forEach(BuiltPlacementBuffer::discard);
+        this.uploadingPartials.clear();
         this.clipRebuildPending.clear();
     }
 }
