@@ -4,6 +4,15 @@ plugins {
 }
 
 repositories {
+	// EXIT (emergency_exit) is not published anywhere yet: `./gradlew :26.3:publishToMavenLocal` in its repository.
+	exclusiveContent {
+		forRepository {
+			mavenLocal()
+		}
+		filter {
+			includeGroup "ml.mypals.exit"
+		}
+	}
 	exclusiveContent {
 		forRepository {
 			maven {
@@ -29,6 +38,18 @@ dependencies {
 
 	implementation "maven.modrinth:bEpr0Arc:ZqV316KY" // Litematica 0.29.1
 	implementation "maven.modrinth:malilib:0.30.2"
+
+	// EXIT routes the schematic rendering past shader packs. Nested, so players do not install it separately.
+	implementation("ml.mypals.exit:emergency_exit:${project.exit_version}") { transitive = false }
+	include("ml.mypals.exit:emergency_exit:${project.exit_version}")
+
+	// Iris and Sodium for the development runs only, the same versions EXIT is built against.
+	localRuntime "maven.modrinth:YL57xq9U:${project.iris_version}"
+	localRuntime "maven.modrinth:AANobbMI:${project.sodium_version}"
+	// Iris nests these in its jar, but the development runtime does not load nested jars of dependencies.
+	for (library in ["org.anarres:jcpp:1.4.14", "org.antlr:antlr4-runtime:4.13.1", "io.github.douira:glsl-transformer:3.0.0-pre3"]) {
+		localRuntime(library) { transitive = false }
+	}
 }
 
 processResources {

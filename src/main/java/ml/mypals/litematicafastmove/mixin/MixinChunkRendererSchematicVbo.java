@@ -1,5 +1,7 @@
 package ml.mypals.litematicafastmove.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.sugar.Local;
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.litematica.render.schematic.ChunkCacheSchematic;
@@ -11,6 +13,7 @@ import fi.dy.masa.litematica.schematic.placement.SchematicPlacementManager;
 import fi.dy.masa.malilib.util.position.IntBoundingBox;
 import ml.mypals.litematicafastmove.mesh.PlacementBlockEntities;
 import ml.mypals.litematicafastmove.mesh.PlacementMeshManager;
+import ml.mypals.litematicafastmove.render.SchematicExit;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.state.BlockState;
 import org.spongepowered.asm.mixin.Final;
@@ -60,5 +63,15 @@ public abstract class MixinChunkRendererSchematicVbo {
                 this.addBlockEntity(state, pos.immutable(), chunkMeshData);
             }
         });
+    }
+
+    @WrapMethod(method = "rebuildChunk")
+    private void plainFormatRebuild(ChunkRenderTaskSchematic task, ChunkRenderDispatcherBuffers pack, Operation<Void> original) {
+        SchematicExit.plainFormat(() -> original.call(task, pack));
+    }
+
+    @WrapMethod(method = "resortTransparency")
+    private void plainFormatResort(ChunkRenderTaskSchematic task, ChunkRenderDispatcherBuffers pack, Operation<Void> original) {
+        SchematicExit.plainFormat(() -> original.call(task, pack));
     }
 }

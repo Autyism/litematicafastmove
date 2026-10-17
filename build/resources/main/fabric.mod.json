@@ -30,6 +30,7 @@
 		"minecraft": "~26.3",
 		"java": ">=25",
 		"fabric-api": "*",
-		"litematica": "*"
+		"litematica": "*",
+		"emergency_exit": ">=0.1.0"
 	}
 }

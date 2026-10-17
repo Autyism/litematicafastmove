@@ -19,6 +19,7 @@ import ml.mypals.litematicafastmove.access.PlacementBlockAccessor;
 import ml.mypals.litematicafastmove.config.FastMoveConfig;
 import ml.mypals.litematicafastmove.config.ThreadPools;
 import ml.mypals.litematicafastmove.mixin.BlockModelCacheSchematicAccessor;
+import ml.mypals.litematicafastmove.render.SchematicExit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.block.FluidRenderer;
@@ -90,7 +91,11 @@ public final class MeshSectionBuilder {
             BUILDER.submit(() -> {
                 List<PlacementMesh.CpuSection> sections = null;
                 try {
-                    sections = build(mesh, generation, accessor, batch, !full, clientDelta, range, camera, world, clientLevel);
+                    List<List<PlacementMesh.CpuSection>> built = new ArrayList<>(1);
+                    SchematicExit.plainFormat(() -> built.add(
+                            build(mesh, generation, accessor, batch, !full,
+                                    clientDelta, range, camera, world, clientLevel)));
+                    sections = built.getFirst();
                 } catch (Throwable e) {
                     LitematicaFastMove.LOGGER.error("Failed to build mesh for placement '{}'", placement.getName(), e);
                 }
@@ -103,7 +108,6 @@ public final class MeshSectionBuilder {
         }
     }
 
-    // 完整构建的各批次结果，全部完成后合并提交；任一批次被取消或失败则整体作废
     private static final class FullBuild {
         private final SchematicPlacement placement;
         private final int generation;

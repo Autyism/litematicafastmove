@@ -38,3 +38,10 @@ hs_err_*.log
 replay_*.log
 *.hprof
 *.jfr
+/build/reports/configuration-cache/1wwt58hahadver0y6lt46207d/euopieepor3pflplyrxg7kuv9/configuration-cache-report.html
+/build/reports/configuration-cache/2aikgw7uwdmt180ddshi7ql1x/b86b0x0x0urf6amb223s57eei/configuration-cache-report.html
+/build/reports/configuration-cache/3nfkmpzzffy85nddi62ohlvcx/24n0w87ax37lws5a8i3j9le88/configuration-cache-report.html
+/build/reports/configuration-cache/clgcp0bi5uo1ggwhpzq99ilv8/1185crsec2eyxrskxlp5p2rjs/configuration-cache-report.html
+/build/processIncludeJars/emergency_exit-0.1.0+26.3.jar
+/build/libs/litematicafastmove-1.0.0.jar
+/build/libs/litematicafastmove-1.0.0-sources.jar

@@ -11,7 +11,11 @@
     "MixinConfigs",
     "MixinFluidModelRendererSchematic",
     "MixinGuiConfigs",
+    "MixinLegacyTerrainFixUniform",
+    "MixinLitematicaRenderer",
     "MixinPlacementManagerTaskRebuild",
+    "MixinRenderHandler",
+    "MixinRenderUtils",
     "MixinSchematicPlacementManagerI",
     "MixinSchematicVerifier",
     "MixinSchematicWorldRefresher",
@@ -20,5 +24,8 @@
   ],
   "injectors": {
     "defaultRequire": 1
-  }
+  },
+  "mixins": [
+    "MixinIRISCompat"
+  ]
 }
