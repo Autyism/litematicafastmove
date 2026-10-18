@@ -5,9 +5,12 @@ import fi.dy.masa.litematica.config.Configs;
 import ml.mypals.exit.api.Exit;
 import ml.mypals.exit.api.ExitChannel;
 import ml.mypals.exit.api.ExitOptions;
+import ml.mypals.litematicafastmove.mesh.MeshDebugGizmos;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.resources.Identifier;
+
+import static ml.mypals.litematicafastmove.LitematicaFastMove.MOD_ID;
 
 
 public final class SchematicExit {
@@ -18,8 +21,8 @@ public final class SchematicExit {
 
     private static ExitChannel channel() {
         if (channel == null) {
-            channel = Exit.channel(Identifier.fromNamespaceAndPath("litematicafastmove", "schematic"), ExitOptions.builder()
-                    .wantsFrame(Configs.Visuals.ENABLE_RENDERING::getBooleanValue)
+            channel = Exit.channel(Identifier.fromNamespaceAndPath(MOD_ID, "schematic"), ExitOptions.builder()
+                    .wantsFrame(() -> Configs.Visuals.ENABLE_RENDERING.getBooleanValue() || MeshDebugGizmos.isEnabled())
                     .build());
         }
         return channel;

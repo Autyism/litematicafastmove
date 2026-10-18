@@ -7,6 +7,7 @@ import ml.mypals.litematicafastmove.mesh.PlacementMeshManager;
 import ml.mypals.litematicafastmove.sync.IFastMoveManager;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 
 public class LitematicaFastMoveClient implements ClientModInitializer {
     private static int ticks;
@@ -21,11 +22,12 @@ public class LitematicaFastMoveClient implements ClientModInitializer {
             ((IFastMoveManager) manager).litematicafastmove$commitSettled(System.currentTimeMillis());
 
             PlacementMeshManager.processDirty();
-            MeshDebugGizmos.flush();
 
             if (++ticks % 10 == 0) {
                 PlacementMeshManager.tick();
             }
         });
+
+        LevelRenderEvents.END_MAIN.register(context -> MeshDebugGizmos.flush());
     }
 }

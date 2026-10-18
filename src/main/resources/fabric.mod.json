@@ -2,10 +2,10 @@
 	"schemaVersion": 1,
 	"id": "litematicafastmove",
 	"version": "${version}",
-	"name": "LitematicaFastMove",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"name": "Litefastica",
+	"description": "Make moving schematics in litematica REALLY REALLY FAST!",
 	"authors": [
-		"Me!"
+		"Ryan100C"
 	],
 	"contact": {
 		"homepage": "https://fabricmc.net/",

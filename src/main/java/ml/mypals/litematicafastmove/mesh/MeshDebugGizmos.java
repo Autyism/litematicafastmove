@@ -2,7 +2,7 @@ package ml.mypals.litematicafastmove.mesh;
 
 import ml.mypals.litematicafastmove.access.PlacementBlockAccessor;
 import ml.mypals.litematicafastmove.config.FastMoveConfig;
-import net.minecraft.client.Minecraft;
+import ml.mypals.litematicafastmove.render.SchematicExit;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.SectionPos;
 import net.minecraft.gizmos.GizmoStyle;
@@ -19,7 +19,7 @@ public final class MeshDebugGizmos {
     private static final int APPLIED = 0xFF40FF80;
     private static final int SKIPPED = 0xFF808080;
     private static final int FULL = 0xFF40A0FF;
-    private static final int MAX_PER_TICK = 512;
+    private static final int MAX_PER_FRAME = 512;
 
     private record Box(AABB aabb, int color) {}
 
@@ -27,7 +27,7 @@ public final class MeshDebugGizmos {
 
     private MeshDebugGizmos() {}
 
-    static boolean isEnabled() {
+    public static boolean isEnabled() {
         return FastMoveConfig.DEBUG_GIZMOS.getBooleanValue();
     }
 
@@ -75,16 +75,16 @@ public final class MeshDebugGizmos {
             return;
         }
 
-        int millis = FastMoveConfig.DEBUG_GIZMO_MILLIS.getIntegerValue();
-        try (var ignored = Minecraft.getInstance().collectPerTickGizmos()) {
+        SchematicExit.portal(() -> {
+            int millis = FastMoveConfig.DEBUG_GIZMO_MILLIS.getIntegerValue();
             Box box;
             int count = 0;
-            while (count++ < MAX_PER_TICK && (box = PENDING.poll()) != null) {
+            while (count++ < MAX_PER_FRAME && (box = PENDING.poll()) != null) {
                 int fill = (box.color() & 0x00FFFFFF) | 0x20000000;
                 Gizmos.cuboid(box.aabb(), GizmoStyle.strokeAndFill(box.color(), 2.0f, fill))
                       .persistForMillis(millis)
                       .fadeOut();
             }
-        }
+        });
     }
 }

@@ -45,3 +45,10 @@ replay_*.log
 /build/processIncludeJars/emergency_exit-0.1.0+26.3.jar
 /build/libs/litematicafastmove-1.0.0.jar
 /build/libs/litematicafastmove-1.0.0-sources.jar
+/build/reports/
+/build/libs/
+/build/
+/build/loom-cache/
+/build/reports/
+/build/resources/
+/build/tmp/
