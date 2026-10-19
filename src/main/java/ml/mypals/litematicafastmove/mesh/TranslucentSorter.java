@@ -1,6 +1,7 @@
 package ml.mypals.litematicafastmove.mesh;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.VertexSorting;
 import ml.mypals.litematicafastmove.LitematicaFastMove;
 import ml.mypals.litematicafastmove.config.FastMoveConfig;
@@ -21,6 +22,8 @@ public class TranslucentSorter {
         return thread;
     });
     private static final Queue<Resorted> RESORTED = new ConcurrentLinkedQueue<>();
+    // used on the sorter thread only
+    private static final ByteBufferBuilder SCRATCH = new ByteBufferBuilder(64 * 1024);
 
     private int budget = FastMoveConfig.TRANSLUCENT_RESORTS_PER_FRAME.getIntegerValue();
 
@@ -43,8 +46,12 @@ public class TranslucentSorter {
         int size = layer.indexCount() * layer.indexType().bytes;
         SORTER.submit(() -> {
             ByteBuffer indices = MemoryUtil.memAlloc(size);
-            try {
-                sort.state.writeSortedIndexBuffer(indices, VertexSorting.byDistance((float) rx, (float) ry, (float) rz));
+            try (ByteBufferBuilder.Result sorted = sort.state.buildSortedIndexBuffer(SCRATCH,
+                    VertexSorting.byDistance((float) rx, (float) ry, (float) rz))) {
+                if (sorted == null || sorted.byteBuffer().remaining() != size) {
+                    throw new IllegalStateException("Sorted index buffer does not match the uploaded one");
+                }
+                MemoryUtil.memCopy(sorted.byteBuffer(), indices);
                 indices.position(0).limit(size);
                 RESORTED.add(new Resorted(layer, indices, rx, ry, rz));
             } catch (Throwable e) {

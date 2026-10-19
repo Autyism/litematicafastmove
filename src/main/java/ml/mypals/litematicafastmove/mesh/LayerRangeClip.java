@@ -2,7 +2,7 @@ package ml.mypals.litematicafastmove.mesh;
 
 import fi.dy.masa.litematica.data.DataManager;
 import fi.dy.masa.malilib.util.LayerMode;
-import fi.dy.masa.malilib.util.position.LayerRange;
+import fi.dy.masa.malilib.util.LayerRange;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 
@@ -12,7 +12,7 @@ public class LayerRangeClip {
     static Range snapshot() {
         LayerRange range = DataManager.getRenderLayerRange();
         if (range == null || range.getLayerMode() == LayerMode.ALL) return null;
-        return new Range(range.getAxis(), range.getMinLayerBoundary(), range.getMaxLayerBoundary());
+        return new Range(range.getAxis(), range.getLayerMin(), range.getLayerMax());
     }
 
     static PlacementMesh.Clip compute(Range range, BlockPos min, BlockPos max, BlockPos sectionOrigin, BlockPos delta) {

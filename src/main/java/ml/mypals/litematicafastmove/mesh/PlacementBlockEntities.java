@@ -94,7 +94,7 @@ public class PlacementBlockEntities {
     private static void addChunksOf(long[] positions, BlockPos offset, Set<Long> out) {
         if (positions == null) return;
         for (long packed : positions) {
-            out.add(ChunkPos.pack((BlockPos.getX(packed) + offset.getX()) >> 4, (BlockPos.getZ(packed) + offset.getZ()) >> 4));
+            out.add(ChunkPos.asLong((BlockPos.getX(packed) + offset.getX()) >> 4, (BlockPos.getZ(packed) + offset.getZ()) >> 4));
         }
     }
 }

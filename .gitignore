@@ -52,3 +52,5 @@ replay_*.log
 /build/reports/
 /build/resources/
 /build/tmp/
+
+libs/

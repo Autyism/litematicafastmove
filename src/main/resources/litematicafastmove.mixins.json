@@ -3,19 +3,15 @@
   "package": "ml.mypals.litematicafastmove.mixin",
   "compatibilityLevel": "JAVA_21",
   "client": [
-    "BlockModelCacheSchematicAccessor",
     "MixinBlockModelRendererSchematic",
     "MixinChunkRendererSchematicVbo",
     "MixinClientLevel",
     "MixinClientPacketListener",
     "MixinConfigs",
-    "MixinFluidModelRendererSchematic",
     "MixinGuiConfigs",
-    "MixinLegacyTerrainFixUniform",
     "MixinLitematicaRenderer",
     "MixinPlacementManagerTaskRebuild",
     "MixinRenderHandler",
-    "MixinRenderUtils",
     "MixinSchematicPlacementManagerI",
     "MixinSchematicVerifier",
     "MixinSchematicWorldRefresher",
@@ -24,8 +20,5 @@
   ],
   "injectors": {
     "defaultRequire": 1
-  },
-  "mixins": [
-    "MixinIRISCompat"
-  ]
+  }
 }

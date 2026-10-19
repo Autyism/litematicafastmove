@@ -1,10 +1,11 @@
 plugins {
-	id 'net.fabricmc.fabric-loom' version "${loom_version}"
+	// Minecraft 1.21.11 is obfuscated: compiled against Mojang's names and remapped to intermediary
+	id 'net.fabricmc.fabric-loom-remap' version "${loom_version}"
 	id 'maven-publish'
 }
 
 repositories {
-	// EXIT (emergency_exit) is not published anywhere yet: `./gradlew :26.3:publishToMavenLocal` in its repository.
+	// EXIT (emergency_exit) is not published anywhere yet: `./gradlew :fabric:publishToMavenLocal` in its repository (branch port/1.21.11).
 	exclusiveContent {
 		forRepository {
 			mavenLocal()
@@ -30,22 +31,25 @@ repositories {
 dependencies {
 	// To change the versions see the gradle.properties file
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
-	implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+	mappings loom.officialMojangMappings()
+	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
 
 	// Fabric API. This is technically optional, but you probably want it anyway.
-	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
 
-	implementation "maven.modrinth:bEpr0Arc:ZqV316KY" // Litematica 0.29.1
-	implementation "maven.modrinth:malilib:0.30.2"
+	// Litematica 0.26.16 and MaLiLib 0.27.20 for 1.21.11 (the jars in libs/)
+	modImplementation files("libs/litematica-fabric-1.21.11-0.26.16.jar")
+	modImplementation files("libs/malilib-fabric-1.21.11-0.27.20.jar")
 
 	// EXIT routes the schematic rendering past shader packs. Nested, so players do not install it separately.
-	implementation("ml.mypals.exit:emergency_exit:${project.exit_version}") { transitive = false }
-	include("ml.mypals.exit:emergency_exit:${project.exit_version}")
+	modImplementation("ml.mypals.exit:emergency_exit-fabric:${project.exit_version}") { transitive = false }
+	include("ml.mypals.exit:emergency_exit-fabric:${project.exit_version}")
 
 	// Iris and Sodium for the development runs only, the same versions EXIT is built against.
-	localRuntime "maven.modrinth:YL57xq9U:${project.iris_version}"
-	localRuntime "maven.modrinth:AANobbMI:${project.sodium_version}"
+	modCompileOnly "maven.modrinth:YL57xq9U:${project.iris_version}"
+	modLocalRuntime "maven.modrinth:YL57xq9U:${project.iris_version}"
+	modLocalRuntime "maven.modrinth:AANobbMI:${project.sodium_version}"
 	// Iris nests these in its jar, but the development runtime does not load nested jars of dependencies.
 	for (library in ["org.anarres:jcpp:1.4.14", "org.antlr:antlr4-runtime:4.13.1", "io.github.douira:glsl-transformer:3.0.0-pre3"]) {
 		localRuntime(library) { transitive = false }
@@ -62,7 +66,7 @@ processResources {
 }
 
 tasks.withType(JavaCompile).configureEach {
-	it.options.release = 25
+	it.options.release = 21
 }
 
 java {
@@ -71,8 +75,8 @@ java {
 	// If you remove this line, sources will not be generated.
 	withSourcesJar()
 
-	sourceCompatibility = JavaVersion.VERSION_25
-	targetCompatibility = JavaVersion.VERSION_25
+	sourceCompatibility = JavaVersion.VERSION_21
+	targetCompatibility = JavaVersion.VERSION_21
 }
 
 jar {

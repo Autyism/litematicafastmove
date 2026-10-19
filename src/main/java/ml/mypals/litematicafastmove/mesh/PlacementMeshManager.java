@@ -154,7 +154,7 @@ public final class PlacementMeshManager {
      */
     public static void markChunkDirty(int chunkX, int chunkZ) {
         if (!MESHES.isEmpty()) {
-            DIRTY_CHUNKS.add(ChunkPos.pack(chunkX, chunkZ));
+            DIRTY_CHUNKS.add(ChunkPos.asLong(chunkX, chunkZ));
         }
     }
 
@@ -218,11 +218,11 @@ public final class PlacementMeshManager {
         BlockPos max = accessor.maxPos;
 
         for (long packed : chunks) {
-            ChunkPos chunk = ChunkPos.unpack(packed);
-            int bx0 = Math.max((chunk.x() << 4) - delta.getX(), min.getX());
-            int bx1 = Math.min((chunk.x() << 4) + 15 - delta.getX(), max.getX());
-            int bz0 = Math.max((chunk.z() << 4) - delta.getZ(), min.getZ());
-            int bz1 = Math.min((chunk.z() << 4) + 15 - delta.getZ(), max.getZ());
+            ChunkPos chunk = new ChunkPos(packed);
+            int bx0 = Math.max((chunk.x << 4) - delta.getX(), min.getX());
+            int bx1 = Math.min((chunk.x << 4) + 15 - delta.getX(), max.getX());
+            int bz0 = Math.max((chunk.z << 4) - delta.getZ(), min.getZ());
+            int bz1 = Math.min((chunk.z << 4) + 15 - delta.getZ(), max.getZ());
             if (bx0 > bx1 || bz0 > bz1) continue;
 
             for (int sx = bx0 >> 4; sx <= bx1 >> 4; sx++) {

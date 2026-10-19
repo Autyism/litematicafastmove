@@ -3,10 +3,10 @@ package ml.mypals.litematicafastmove.mesh;
 import com.llamalad7.mixinextras.sugar.ref.LocalIntRef;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
-import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
-import com.mojang.renderpearl.api.commands.RenderPass;
-import com.mojang.renderpearl.api.pipeline.RenderPipeline;
-import com.mojang.renderpearl.api.textures.GpuTextureView;
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.mojang.blaze3d.systems.RenderPass;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.textures.GpuTextureView;
 import fi.dy.masa.litematica.config.Configs;
 import fi.dy.masa.litematica.config.Hotkeys;
 import fi.dy.masa.litematica.render.schematic.OverlayRenderType;
@@ -16,7 +16,7 @@ import ml.mypals.litematicafastmove.sync.MoveInterpolator;
 import ml.mypals.litematicafastmove.sync.PendingMoveTracker;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.DynamicGpuData;
+import net.minecraft.client.renderer.DynamicUniforms;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
 import net.minecraft.client.renderer.culling.Frustum;
 import net.minecraft.core.BlockPos;
@@ -34,8 +34,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.OptionalInt;
 import java.util.Set;
 
 public final class PlacementMeshRenderer {
@@ -54,7 +54,7 @@ public final class PlacementMeshRenderer {
     }
 
     public static boolean appendDraws(Map<ChunkSectionLayer, List<RenderPass.Draw<GpuBufferSlice[]>>> renderMap,
-                                      List<DynamicGpuData.Transform> transforms,
+                                      List<DynamicUniforms.Transform> transforms,
                                       Matrix4fc modelView, Vector4fc colorModulator, Matrix4fc textureMatrix,
                                       double cameraX, double cameraY, double cameraZ,
                                       LocalIntRef maxIndexCount) {
@@ -93,13 +93,13 @@ public final class PlacementMeshRenderer {
     }
 
     private static void addDraw(Map<ChunkSectionLayer, List<RenderPass.Draw<GpuBufferSlice[]>>> renderMap,
-                                List<DynamicGpuData.Transform> transforms,
+                                List<DynamicUniforms.Transform> transforms,
                                 Matrix4fc modelView, Vector4fc colorModulator, Matrix4fc textureMatrix,
                                 LocalIntRef maxIndexCount, PlacementMesh.GpuLayer layer, Vector3f offset) {
         final int slot = transforms.size();
-        transforms.add(new DynamicGpuData.Transform(modelView, colorModulator, offset, textureMatrix));
+        transforms.add(new DynamicUniforms.Transform(modelView, colorModulator, offset, textureMatrix));
         renderMap.get(layer.layer()).add(new RenderPass.Draw<>(0, layer.vertexBuffer(), layer.indexBuffer(),
-        layer.indexType(), 0, layer.indexCount(), 0, (slices, uploader) -> uploader.setUniform("DynamicTransforms", slices[slot])));
+                layer.indexType(), 0, layer.indexCount(), (slices, uploader) -> uploader.upload("DynamicTransforms", slices[slot])));
 
         if (layer.indexBuffer() == null && layer.indexCount() > maxIndexCount.get()) {
             maxIndexCount.set(layer.indexCount());
@@ -110,11 +110,11 @@ public final class PlacementMeshRenderer {
         if (PlacementMeshManager.meshes().isEmpty()) return;
 
         Vec3 cameraPos = camera.position();
-        Matrix4f viewMatrix = RenderSystem.getModelViewMatrixCopy();
+        Matrix4f viewMatrix = new Matrix4f(RenderSystem.getModelViewMatrix());
         Vector4f colorModulator = new Vector4f(1f, 1f, 1f, 1f);
         Matrix4f textureMatrix = new Matrix4f();
         List<RenderPass.Draw<GpuBufferSlice[]>> draws = new ArrayList<>();
-        List<DynamicGpuData.Transform> transforms = new ArrayList<>();
+        List<DynamicUniforms.Transform> transforms = new ArrayList<>();
         int[] maxIndexCount = {0};
 
         forEachVisibleSection(cameraPos.x, cameraPos.y, cameraPos.z, false, (section, ox, oy, oz) -> {
@@ -123,9 +123,9 @@ public final class PlacementMeshRenderer {
 
                 final int slot = transforms.size();
                 Matrix4f modelView = new Matrix4f(viewMatrix).translate((float) ox, (float) oy, (float) oz);
-                transforms.add(new DynamicGpuData.Transform(modelView, colorModulator, new Vector3f(), textureMatrix));
-                draws.add(new RenderPass.Draw<>(0, layer.vertexBuffer(), null, null, 0, layer.indexCount(), 0,
-                        (slices, uploader) -> uploader.setUniform("DynamicTransforms", slices[slot])));
+                transforms.add(new DynamicUniforms.Transform(modelView, colorModulator, new Vector3f(), textureMatrix));
+                draws.add(new RenderPass.Draw<>(0, layer.vertexBuffer(), null, null, 0, layer.indexCount(),
+                        (slices, uploader) -> uploader.upload("DynamicTransforms", slices[slot])));
                 maxIndexCount[0] = Math.max(maxIndexCount[0], layer.indexCount());
             }
         });
@@ -134,17 +134,18 @@ public final class PlacementMeshRenderer {
 
         boolean renderThrough = Configs.Visuals.SCHEMATIC_OVERLAY_RENDER_THROUGH.getBooleanValue() ||
                                 Hotkeys.RENDER_OVERLAY_THROUGH_BLOCKS.getKeybind().isKeybindHeld();
-        RenderPipeline pipeline = renderThrough ? type.renderThrough() : type.pipeline();
-        RenderTarget target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
+        RenderPipeline pipeline = renderThrough ? type.getRenderThrough() : type.getPipeline();
+        // as Litematica 0.26 draws its overlays; inside EXIT's portal the pass is moved onto its target
+        RenderTarget target = Minecraft.getInstance().getMainRenderTarget();
         GpuTextureView colorTexture = target.getColorTextureView();
-        GpuTextureView depthTexture = target.getDepthTextureView();
-        RenderSystem.AutoStorageIndexBuffer autoStorageIndexBuffer = RenderSystem.getSequentialBuffer(type.topology());
-        GpuBufferSlice[] slices = RenderSystem.getDynamicUniforms().writeTransforms(transforms.toArray(new DynamicGpuData.Transform[0]));
+        GpuTextureView depthTexture = target.useDepth ? target.getDepthTextureView() : null;
+        RenderSystem.AutoStorageIndexBuffer autoStorageIndexBuffer = RenderSystem.getSequentialBuffer(type.getDrawMode());
+        GpuBufferSlice[] slices = RenderSystem.getDynamicUniforms().writeTransforms(transforms.toArray(new DynamicUniforms.Transform[0]));
 
         assert colorTexture != null;
         try (RenderPass pass = RenderSystem.getDevice().createCommandEncoder().createRenderPass(
-                () -> "litematicafastmove:placement_overlay", colorTexture, Optional.empty(), depthTexture, OptionalDouble.empty())) {
-            pass.setPipeline(RenderSystem.getCompiledPipeline(pipeline));
+                () -> "litematicafastmove:placement_overlay", colorTexture, OptionalInt.empty(), depthTexture, OptionalDouble.empty())) {
+            pass.setPipeline(pipeline);
             RenderSystem.bindDefaultUniforms(pass);
             pass.drawMultipleIndexed(draws, autoStorageIndexBuffer.getBuffer(maxIndexCount[0]), autoStorageIndexBuffer.type(),
                     List.of("DynamicTransforms"), slices);

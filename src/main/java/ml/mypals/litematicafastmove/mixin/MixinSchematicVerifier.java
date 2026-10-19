@@ -12,8 +12,8 @@ import fi.dy.masa.litematica.util.IgnoreBlockRegistry;
 import fi.dy.masa.litematica.util.ItemUtils;
 import fi.dy.masa.litematica.util.WorldUtils;
 import fi.dy.masa.litematica.world.WorldSchematic;
-import fi.dy.masa.malilib.util.position.IntBoundingBox;
-import fi.dy.masa.malilib.util.position.LayerRange;
+import fi.dy.masa.malilib.util.IntBoundingBox;
+import fi.dy.masa.malilib.util.LayerRange;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
@@ -113,23 +113,23 @@ public abstract class MixinSchematicVerifier extends TaskBase {
 
         for (ChunkPos pos : this.requiredChunks) {
             if (session.isSubmitted(pos)) continue;
-            if (!WorldUtils.isClientChunkLoaded(this.worldClient, pos.x(), pos.z())) continue;
+            if (!WorldUtils.isClientChunkLoaded(this.worldClient, pos.x, pos.z)) continue;
 
             List<IntBoundingBox> boxes = new ArrayList<>();
-            for (IntBoundingBox box : this.schematicPlacement.getBoxesWithinChunk(pos.x(), pos.z()).values()) {
+            for (IntBoundingBox box : this.schematicPlacement.getBoxesWithinChunk(pos.x, pos.z).values()) {
                 IntBoundingBox clamped = ranged ? litematicafastmove$clamp(box, range) : box;
                 if (clamped != null) boxes.add(clamped);
             }
 
-            session.submit(pos, this.worldClient.getChunk(pos.x(), pos.z()), boxes);
+            session.submit(pos, this.worldClient.getChunk(pos.x, pos.z), boxes);
         }
     }
 
     @Unique
     private static IntBoundingBox litematicafastmove$clamp(IntBoundingBox box, LayerRange range) {
         Direction.Axis axis = range.getAxis();
-        int min = range.getMinLayerBoundary();
-        int max = range.getMaxLayerBoundary();
+        int min = range.getLayerMin();
+        int max = range.getLayerMax();
         int minX = axis == Direction.Axis.X ? Math.max(box.minX(), min) : box.minX();
         int minY = axis == Direction.Axis.Y ? Math.max(box.minY(), min) : box.minY();
         int minZ = axis == Direction.Axis.Z ? Math.max(box.minZ(), min) : box.minZ();
@@ -174,7 +174,7 @@ public abstract class MixinSchematicVerifier extends TaskBase {
                     for (BlockPos pos : group.positions()) {
                         this.blockMismatches.put(pos, group.mismatch());
                     }
-                    ItemUtils.setItemForBlock(this.worldClient, itemPos, group.mismatch().stateFound());
+                    ItemUtils.setItemForBlock(this.worldClient, itemPos, group.mismatch().stateFound);
                 }
             }
 
@@ -213,14 +213,14 @@ public abstract class MixinSchematicVerifier extends TaskBase {
 
     // 方块变化后的复查：投影方块同样直接从投影容器读取
     @WrapOperation(method = "checkChangedPositions", at = @At(value = "INVOKE",
-            target = "Lfi/dy/masa/litematica/world/WorldSchematic;hasChunkAt(Lnet/minecraft/core/BlockPos;)Z"))
+            target = "Lfi/dy/masa/litematica/world/WorldSchematic;hasChunkAt(Lnet/minecraft/core/BlockPos;)Z", remap = true))
     private boolean recheckWithoutWorldSchematic(WorldSchematic world, BlockPos pos, Operation<Boolean> original) {
         if (FastMoveConfig.ENABLE_ASYNC_VERIFY.getBooleanValue() && this.schematicPlacement != null) return true;
         return original.call(world, pos);
     }
 
     @WrapOperation(method = "checkChangedPositions", at = @At(value = "INVOKE",
-            target = "Lfi/dy/masa/litematica/world/WorldSchematic;getBlockState(Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/block/state/BlockState;"))
+            target = "Lfi/dy/masa/litematica/world/WorldSchematic;getBlockState(Lnet/minecraft/core/BlockPos;)Lnet/minecraft/world/level/block/state/BlockState;", remap = true))
     private BlockState recheckFromPlacement(WorldSchematic world, BlockPos pos, Operation<BlockState> original) {
         if (FastMoveConfig.ENABLE_ASYNC_VERIFY.getBooleanValue() && this.schematicPlacement != null) {
             PlacementBlockAccessor accessor = PlacementAccessorRegistry.getOrCreate(this.schematicPlacement);

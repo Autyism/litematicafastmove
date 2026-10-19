@@ -98,18 +98,18 @@ public final class PendingMoveTracker {
 
     public static boolean isFrozenChunk(int chunkX, int chunkZ) {
         Set<Long> frozen = frozenChunks;
-        return !frozen.isEmpty() && frozen.contains(ChunkPos.pack(chunkX, chunkZ));
+        return !frozen.isEmpty() && frozen.contains(ChunkPos.asLong(chunkX, chunkZ));
     }
 
     public static void markSkippedRebuild(int chunkX, int chunkZ) {
-        SKIPPED_REBUILDS.add(ChunkPos.pack(chunkX, chunkZ));
+        SKIPPED_REBUILDS.add(ChunkPos.asLong(chunkX, chunkZ));
     }
 
     public static List<ChunkPos> drainUnfrozenSkipped() {
         List<ChunkPos> result = new ArrayList<>();
         for (Long key : SKIPPED_REBUILDS) {
-            ChunkPos pos = ChunkPos.unpack(key);
-            if (!isFrozenChunk(pos.x(), pos.z()) && SKIPPED_REBUILDS.remove(key)) {
+            ChunkPos pos = new ChunkPos(key);
+            if (!isFrozenChunk(pos.x, pos.z) && SKIPPED_REBUILDS.remove(key)) {
                 result.add(pos);
             }
         }
@@ -134,7 +134,7 @@ public final class PendingMoveTracker {
             }
 
             for (ChunkPos pos : state.baseChunks) {
-                frozen.add(pos.pack());
+                frozen.add(pos.toLong());
             }
         });
 

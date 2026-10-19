@@ -4,12 +4,11 @@ import com.mojang.blaze3d.vertex.BufferBuilder;
 import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.VertexSorting;
-import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.blaze3d.vertex.PoseStack;
 import fi.dy.masa.litematica.config.Configs;
-import fi.dy.masa.litematica.render.schematic.BlockModelCacheSchematic;
+import fi.dy.masa.litematica.render.IWorldSchematicRenderer;
+import fi.dy.masa.litematica.render.LitematicaRenderer;
 import fi.dy.masa.litematica.render.schematic.BlockModelRendererSchematic;
-import fi.dy.masa.litematica.render.schematic.FluidModelRendererSchematic;
-import fi.dy.masa.litematica.render.schematic.IBlockOutputSchematic;
 import fi.dy.masa.litematica.render.schematic.OverlayRenderType;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacement;
 import fi.dy.masa.litematica.world.WorldSchematic;
@@ -18,16 +17,18 @@ import ml.mypals.litematicafastmove.LitematicaFastMove;
 import ml.mypals.litematicafastmove.access.PlacementBlockAccessor;
 import ml.mypals.litematicafastmove.config.FastMoveConfig;
 import ml.mypals.litematicafastmove.config.ThreadPools;
-import ml.mypals.litematicafastmove.mixin.BlockModelCacheSchematicAccessor;
 import ml.mypals.litematicafastmove.render.SchematicExit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.client.renderer.block.FluidRenderer;
-import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
+import net.minecraft.client.renderer.ItemBlockRenderTypes;
+import net.minecraft.client.renderer.block.BlockRenderDispatcher;
+import net.minecraft.client.renderer.block.model.BlockModelPart;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;
+import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
+import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
@@ -47,6 +48,7 @@ import java.util.Set;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.Executors;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 public final class MeshSectionBuilder {
     private static final class MeshBuilderThread extends Thread {
@@ -79,7 +81,7 @@ public final class MeshSectionBuilder {
                        BlockPos buildOrigin, Set<Long> keys, BlockPos clientDelta, WorldSchematic world, ClientLevel clientLevel,
                        Consumer<PlacementMesh.BuiltPlacementBuffer> onBuilt) {
         LayerRangeClip.Range range = LayerRangeClip.snapshot();
-        Vec3 camera = Minecraft.getInstance().gameRenderer.mainCamera().position();
+        Vec3 camera = Minecraft.getInstance().gameRenderer.getMainCamera().position();
         boolean full = keys == null;
 
         List<Long> sectionKeys = full ? allSections(accessor) : new ArrayList<>(keys);
@@ -198,22 +200,23 @@ public final class MeshSectionBuilder {
             view.setClip(clipAxis, clipMin, clipMax);
         }
 
-        BlockModelRendererSchematic blockRenderer = new BlockModelRendererSchematic();
-        blockRenderer.toggleAO(true);
-        blockRenderer.toggleCulling(true);
-        blockRenderer.reload();
-        blockRenderer.enableCache();
-        FluidModelRendererSchematic fluidRenderer = new FluidModelRendererSchematic(
-                ((BlockModelCacheSchematicAccessor) BlockModelCacheSchematic.INSTANCE).litematicafastmove$fluidStateModelSet());
+        // Litematica 0.26 (1.21.11): blocks through its BlockModelRendererSchematic (its AO, and its side culling that
+        // MixinBlockModelRendererSchematic clips to the placement), fluids through the game's liquid renderer
+        Minecraft mc = Minecraft.getInstance();
+        BlockRenderDispatcher dispatcher = mc.getBlockRenderer();
+        IWorldSchematicRenderer worldRenderer = LitematicaRenderer.getInstance().getWorldRenderer();
+        BlockModelRendererSchematic blockRenderer = new BlockModelRendererSchematic(mc.getBlockColors(), dispatcher);
+        BlockModelRendererSchematic.enableCache();
+        RandomSource random = RandomSource.create();
+        PoseStack matrices = new PoseStack();
 
         boolean translucent = Configs.Visuals.RENDER_BLOCKS_AS_TRANSLUCENT.getBooleanValue();
         boolean renderFluids = Configs.Visuals.ENABLE_SCHEMATIC_FLUIDS.getBooleanValue();
         boolean renderColliding = Configs.Visuals.RENDER_COLLIDING_SCHEMATIC_BLOCKS.getBooleanValue();
 
-        FluidRenderer.Output fluidOutput = layer -> builder(builders, allocators, layer);
-        IBlockOutputSchematic blockOutput = (bx, by, bz, quad, inst) ->
-                builder(builders, allocators, translucent ? ChunkSectionLayer.TRANSLUCENT : quad.materialInfo().layer())
-                        .putBlockBakedQuad(bx, by, bz, quad, inst);
+        Function<ChunkSectionLayer, BufferBuilder> fluidOutput = layer -> builder(builders, allocators, layer);
+        Function<ChunkSectionLayer, BufferBuilder> blockOutput = layer ->
+                builder(builders, allocators, translucent ? ChunkSectionLayer.TRANSLUCENT : layer);
 
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
         BlockPos.MutableBlockPos clientPos = new BlockPos.MutableBlockPos();
@@ -226,7 +229,7 @@ public final class MeshSectionBuilder {
                         p -> clientLevel.getBlockState(overlayClientPos.setWithOffset(p, clientDelta)),
                         type -> overlayBuilders.computeIfAbsent(type, t -> new BufferBuilder(
                                 overlayAllocators.computeIfAbsent(t, k -> new ByteBufferBuilder(256 * 1024)),
-                                t.topology(), t.vertexFormat())))
+                                t.getDrawMode(), t.getVertexFormat())))
                 : null;
 
         try {
@@ -272,7 +275,8 @@ public final class MeshSectionBuilder {
 
                                 boolean missing = false;
                                 if (!schematicAir && (clientAir || (renderColliding && clientState != state))) {
-                                    tessellate(view, state, pos, blockRenderer, fluidRenderer, blockOutput, fluidOutput, renderFluids);
+                                    tessellate(view, state, pos, dispatcher, worldRenderer, blockRenderer, random, matrices,
+                                            blockOutput, fluidOutput, renderFluids);
                                     if (state.hasBlockEntity()) {
                                         blockEntities.add(BlockPos.asLong(x, y, z));
                                     }
@@ -296,7 +300,7 @@ public final class MeshSectionBuilder {
 
                         ByteBuffer indices = null;
                         MeshData.SortState sortState = null;
-                        if (entry.getKey().translucent()) {
+                        if (entry.getKey() == ChunkSectionLayer.TRANSLUCENT) {
                             sortState = meshData.sortQuads(sortAllocator, VertexSorting.byDistance(
                                     (float) (camera.x - sectionOrigin.getX() - clientDelta.getX()),
                                     (float) (camera.y - sectionOrigin.getY() - clientDelta.getY()),
@@ -335,7 +339,7 @@ public final class MeshSectionBuilder {
                 }
             }
         } finally {
-            blockRenderer.disableCache();
+            BlockModelRendererSchematic.disableCache();
             allocators.values().forEach(ByteBufferBuilder::close);
             overlayAllocators.values().forEach(ByteBufferBuilder::close);
             sortAllocator.close();
@@ -344,21 +348,26 @@ public final class MeshSectionBuilder {
         return sections;
     }
 
-    private static void tessellate(DetachedBlockView view, BlockState state, BlockPos pos,
-                                   BlockModelRendererSchematic blockRenderer, FluidModelRendererSchematic fluidRenderer,
-                                   IBlockOutputSchematic blockOutput, FluidRenderer.Output fluidOutput, boolean renderFluids) {
+    /** As Litematica 0.26's ChunkRendererSchematicVbo does it, into this section's buffers (positions within the section) */
+    private static void tessellate(DetachedBlockView view, BlockState state, BlockPos pos, BlockRenderDispatcher dispatcher,
+                                   IWorldSchematicRenderer worldRenderer, BlockModelRendererSchematic blockRenderer,
+                                   RandomSource random, PoseStack matrices, Function<ChunkSectionLayer, BufferBuilder> blockOutput,
+                                   Function<ChunkSectionLayer, BufferBuilder> fluidOutput, boolean renderFluids) {
         try {
             FluidState fluidState = state.getFluidState();
             if (renderFluids && !fluidState.isEmpty()) {
-                fluidRenderer.tesselate(view, pos, fluidOutput, state, fluidState);
+                // the game's liquid renderer writes the positions within the section itself
+                dispatcher.renderLiquid(pos, view, fluidOutput.apply(ItemBlockRenderTypes.getRenderLayer(fluidState)), state, fluidState);
             }
 
             if (state.getRenderShape() == RenderShape.MODEL) {
-                BlockStateModel model = BlockModelCacheSchematic.INSTANCE.fetchBlockStateModel(state);
-                if (model != null) {
-                    Vec3 offset = new Vec3(pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15);
-                    blockRenderer.tessellateBlock(view, state, pos, offset, model, state.getSeed(pos), blockOutput);
-                }
+                random.setSeed(state.getSeed(pos));
+                List<BlockModelPart> parts = worldRenderer.getModelParts(pos, state, random);
+                matrices.pushPose();
+                matrices.translate(pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15);
+                blockRenderer.renderModel(view, parts, state, pos, matrices,
+                        blockOutput.apply(ItemBlockRenderTypes.getChunkRenderType(state)), false, OverlayTexture.NO_OVERLAY);
+                matrices.popPose();
             }
         } catch (Throwable e) {
             LitematicaFastMove.LOGGER.debug("Failed to tessellate {} at {}", state, pos.toShortString(), e);
@@ -369,7 +378,7 @@ public final class MeshSectionBuilder {
                                          EnumMap<ChunkSectionLayer, ByteBufferBuilder> allocators, ChunkSectionLayer layer) {
         return builders.computeIfAbsent(layer, l -> new BufferBuilder(
                 allocators.computeIfAbsent(l, k -> new ByteBufferBuilder(k.bufferSize())),
-                PrimitiveTopology.QUADS, l.vertexFormat()));
+                l.pipeline().getVertexFormatMode(), l.pipeline().getVertexFormat()));
     }
 
     private static ByteBuffer copy(ByteBuffer source) {

@@ -149,7 +149,7 @@ public abstract class MixinSchematicPlacementManagerI implements IFastMoveManage
     @Unique
     private void litematicafastmove$rebuildSkipped() {
         for (ChunkPos pos : PendingMoveTracker.drainUnfrozenSkipped()) {
-            this.markChunkForRebuild(pos.x(), pos.z());
+            this.markChunkForRebuild(pos.x, pos.z);
         }
     }
 }

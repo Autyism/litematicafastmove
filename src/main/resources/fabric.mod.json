@@ -7,6 +7,9 @@
 	"authors": [
 		"Ryan100C"
 	],
+	"contributors": [
+		"Autyism"
+	],
 	"contact": {
 		"homepage": "https://fabricmc.net/",
 		"sources": "https://github.com/FabricMC/fabric-example-mod"
@@ -27,10 +30,10 @@
 	],
 	"depends": {
 		"fabricloader": ">=0.19.5",
-		"minecraft": "~26.3",
-		"java": ">=25",
+		"minecraft": "~1.21.11",
+		"java": ">=21",
 		"fabric-api": "*",
-		"litematica": "*",
+		"litematica": ">=0.26.16",
 		"emergency_exit": ">=0.1.0"
 	}
 }

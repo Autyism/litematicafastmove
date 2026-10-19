@@ -2,10 +2,9 @@ package ml.mypals.litematicafastmove.mesh;
 
 import ml.mypals.litematicafastmove.access.PlacementBlockAccessor;
 import net.minecraft.client.multiplayer.ClientLevel;
-import net.minecraft.client.renderer.block.BlockAndTintGetter;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.world.level.CardinalLighting;
+import net.minecraft.world.level.BlockAndTintGetter;
 import net.minecraft.world.level.ColorResolver;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
@@ -108,8 +107,8 @@ final class DetachedBlockView implements BlockAndTintGetter {
     }
 
     @Override
-    public @NonNull CardinalLighting cardinalLighting() {
-        return this.clientLevel.cardinalLighting();
+    public float getShade(@NonNull Direction direction, boolean shade) {
+        return this.clientLevel.getShade(direction, shade);
     }
 
     @Override

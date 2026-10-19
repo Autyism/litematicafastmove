@@ -10,7 +10,7 @@ import fi.dy.masa.litematica.render.schematic.ChunkRenderDispatcherBuffers;
 import fi.dy.masa.litematica.render.schematic.ChunkRenderTaskSchematic;
 import fi.dy.masa.litematica.render.schematic.ChunkRendererSchematicVbo;
 import fi.dy.masa.litematica.schematic.placement.SchematicPlacementManager;
-import fi.dy.masa.malilib.util.position.IntBoundingBox;
+import fi.dy.masa.malilib.util.IntBoundingBox;
 import ml.mypals.litematicafastmove.mesh.PlacementBlockEntities;
 import ml.mypals.litematicafastmove.mesh.PlacementMeshManager;
 import ml.mypals.litematicafastmove.render.SchematicExit;

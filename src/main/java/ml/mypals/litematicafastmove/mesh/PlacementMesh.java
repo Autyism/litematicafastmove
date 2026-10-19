@@ -1,8 +1,8 @@
 package ml.mypals.litematicafastmove.mesh;
 
 import com.mojang.blaze3d.vertex.MeshData;
-import com.mojang.renderpearl.api.buffers.GpuBuffer;
-import com.mojang.renderpearl.api.pipeline.IndexType;
+import com.mojang.blaze3d.buffers.GpuBuffer;
+import com.mojang.blaze3d.vertex.VertexFormat.IndexType;
 import fi.dy.masa.litematica.render.schematic.OverlayRenderType;
 import ml.mypals.litematicafastmove.access.PlacementBlockAccessor;
 import net.minecraft.client.renderer.chunk.ChunkSectionLayer;

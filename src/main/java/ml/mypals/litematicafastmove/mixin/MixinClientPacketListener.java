@@ -8,11 +8,11 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(value = ClientPacketListener.class, remap = false)
+@Mixin(ClientPacketListener.class)
 public abstract class MixinClientPacketListener {
 
     @Inject(method = "handleLevelChunkWithLight", at = @At("RETURN"))
     private void onChunkLoaded(ClientboundLevelChunkWithLightPacket packet, CallbackInfo ci) {
-        PlacementMeshManager.markChunkDirty(packet.x(), packet.z());
+        PlacementMeshManager.markChunkDirty(packet.getX(), packet.getZ());
     }
 }
