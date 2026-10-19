@@ -24,17 +24,15 @@ import org.spongepowered.asm.mixin.injection.ModifyVariable;
 @Mixin(value = LitematicaRenderer.class, remap = false)
 public class MixinLitematicaRenderer {
 
-    // Litematica 0.26 opens the passes on the group's own target (the main one while a shader pack is in use),
-    // which EXIT's portal moves onto its target.
+    // Litematica 0.26 在方块层组自己的目标上开渲染通道（开着光影时就是主目标），EXIT 的 portal 会把它挪到 EXIT 的目标上
     @WrapMethod(method = "piecewiseDrawBlockLayerGroup")
     private void routeTerrain(ChunkSectionLayerGroup group, @Nullable GpuSampler sampler, Operation<Void> original) {
         SchematicExit.portal(() -> {
-            // 1.21.11 submits the entities and block entities after the opaque terrain: draw them before the
-            // translucent terrain, so their solid parts do not cover it
+            // 1.21.11 在不透明地形之后才提交实体和方块实体：在半透明地形之前先把它们画掉，免得实心部分盖住半透明地形
             if (group == ChunkSectionLayerGroup.TRANSLUCENT) {
                 SchematicExit.flushBatch();
             }
-            // the block meshes are in the vanilla format (see IrisFormat)
+            // 方块网格是原版格式（见 IrisFormat）
             IrisFormat.plainDraw(() -> original.call(group, sampler));
         });
     }
@@ -44,7 +42,7 @@ public class MixinLitematicaRenderer {
         return SchematicExit.batch(queue);
     }
 
-    // The block entities come as the game's SubmitNodeStorage here, so the batch goes in at the call instead.
+    // 这里拿到的方块实体队列是原版的 SubmitNodeStorage，所以在调用处换成 batch
     @WrapOperation(method = "piecewiseRenderBlockEntities", at = @At(value = "INVOKE",
             target = "Lfi/dy/masa/litematica/render/IWorldSchematicRenderer;renderBlockEntities"))
     private void routeBlockEntities(IWorldSchematicRenderer renderer, Camera camera, Frustum frustum, PoseStack matrices,

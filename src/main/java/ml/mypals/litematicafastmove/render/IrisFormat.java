@@ -4,19 +4,18 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import net.fabricmc.loader.api.FabricLoader;
 
 /**
- * Keeps the schematic's block meshes in the vanilla block format while a shader pack is in use (1.21.11).
+ * 开着光影包时（1.21.11）让投影的方块网格保持原版方块格式。
  * <p>
- * Iris for 1.21.11 widens the block format into its terrain format whenever the level is being rendered: the format
- * of pipelines that use it, and the buffers built for it. Litematica builds its meshes on the render thread while the
- * level renders, but the detached meshes are built on our own threads, at any time, so their format would depend on
- * timing. Instead every block mesh is built in the vanilla format and drawn with the level flag off.
+ * 1.21.11 的 Iris 在渲染世界期间会把原版方块格式扩展成它自己的地形格式：用这个格式的管线、这期间新建的缓冲都会变。
+ * Litematica 在渲染线程上、渲染世界期间构建网格；独立网格却在我们自己的线程上随时构建，格式就要看时机。
+ * 所以方块网格一律按原版格式构建，绘制时把 Iris 的“正在渲染世界”标记关掉。
  */
 public final class IrisFormat {
     private static final boolean IRIS = FabricLoader.getInstance().isModLoaded("iris");
 
     private IrisFormat() {}
 
-    /** Our own mesh builds, which name the vanilla block format themselves. Any thread. */
+    /** 我们自己的网格构建，格式自己指定为原版方块格式。任何线程。 */
     public static void plainBuild(Runnable build) {
         if (IRIS) {
             IrisFormatHooks.skipExtension(build);
@@ -26,8 +25,8 @@ public final class IrisFormat {
     }
 
     /**
-     * Litematica's mesh builds, which take the format from the game's pipelines: Iris hands those out widened while
-     * the level flag is on. On the render thread only, where Litematica 0.26 builds; anywhere else nothing changes.
+     * Litematica 的网格构建，格式取自原版管线：标记开着时 Iris 给的是扩展后的格式。
+     * 只在渲染线程上处理（Litematica 0.26 就在那里构建），别的线程不变。
      */
     public static void plainLitematicaBuild(Runnable build) {
         if (IRIS && RenderSystem.isOnRenderThread()) {
@@ -37,7 +36,7 @@ public final class IrisFormat {
         }
     }
 
-    /** Drawings of those meshes, on the render thread. */
+    /** 在渲染线程上绘制这些网格。 */
     public static void plainDraw(Runnable draw) {
         if (IRIS) {
             IrisFormatHooks.plainLevel(draw);

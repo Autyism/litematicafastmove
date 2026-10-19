@@ -22,7 +22,7 @@ public class TranslucentSorter {
         return thread;
     });
     private static final Queue<Resorted> RESORTED = new ConcurrentLinkedQueue<>();
-    // used on the sorter thread only
+    // 只在排序线程上用
     private static final ByteBufferBuilder SCRATCH = new ByteBufferBuilder(64 * 1024);
 
     private int budget = FastMoveConfig.TRANSLUCENT_RESORTS_PER_FRAME.getIntegerValue();

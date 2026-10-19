@@ -203,8 +203,8 @@ public final class MeshSectionBuilder {
             view.setClip(clipAxis, clipMin, clipMax);
         }
 
-        // Litematica 0.26 (1.21.11): blocks through its BlockModelRendererSchematic (its AO, and its side culling that
-        // MixinBlockModelRendererSchematic clips to the placement), fluids through the game's liquid renderer
+        // Litematica 0.26（1.21.11）：方块用它的 BlockModelRendererSchematic 画（用它的 AO，面剔除由
+        // MixinBlockModelRendererSchematic 裁到投影范围），流体用原版的流体渲染
         Minecraft mc = Minecraft.getInstance();
         BlockRenderDispatcher dispatcher = mc.getBlockRenderer();
         IWorldSchematicRenderer worldRenderer = LitematicaRenderer.getInstance().getWorldRenderer();
@@ -351,7 +351,7 @@ public final class MeshSectionBuilder {
         return sections;
     }
 
-    /** As Litematica 0.26's ChunkRendererSchematicVbo does it, into this section's buffers (positions within the section) */
+    /** 和 Litematica 0.26 的 ChunkRendererSchematicVbo 一样，画进本区段的缓冲（顶点用区段内坐标） */
     private static void tessellate(DetachedBlockView view, BlockState state, BlockPos pos, BlockRenderDispatcher dispatcher,
                                    IWorldSchematicRenderer worldRenderer, BlockModelRendererSchematic blockRenderer,
                                    RandomSource random, PoseStack matrices, Function<ChunkSectionLayer, BufferBuilder> blockOutput,
@@ -359,7 +359,7 @@ public final class MeshSectionBuilder {
         try {
             FluidState fluidState = state.getFluidState();
             if (renderFluids && !fluidState.isEmpty()) {
-                // the game's liquid renderer writes the positions within the section itself
+                // 原版流体渲染本来就写区段内坐标
                 dispatcher.renderLiquid(pos, view, fluidOutput.apply(ItemBlockRenderTypes.getRenderLayer(fluidState)), state, fluidState);
             }
 
@@ -381,7 +381,7 @@ public final class MeshSectionBuilder {
                                          EnumMap<ChunkSectionLayer, ByteBufferBuilder> allocators, ChunkSectionLayer layer) {
         return builders.computeIfAbsent(layer, l -> new BufferBuilder(
                 allocators.computeIfAbsent(l, k -> new ByteBufferBuilder(k.bufferSize())),
-                // the vanilla block format by name: off the render thread the game's pipelines may report Iris' widened one
+                // 直接用原版方块格式：不在渲染线程时，原版管线报出的格式可能已被 Iris 扩展（见 IrisFormat）
                 VertexFormat.Mode.QUADS, DefaultVertexFormat.BLOCK));
     }
 

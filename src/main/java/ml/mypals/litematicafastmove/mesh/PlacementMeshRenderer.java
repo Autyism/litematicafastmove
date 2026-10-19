@@ -135,8 +135,8 @@ public final class PlacementMeshRenderer {
         boolean renderThrough = Configs.Visuals.SCHEMATIC_OVERLAY_RENDER_THROUGH.getBooleanValue() ||
                                 Hotkeys.RENDER_OVERLAY_THROUGH_BLOCKS.getKeybind().isKeybindHeld();
         RenderPipeline pipeline = renderThrough ? type.getRenderThrough() : type.getPipeline();
-        // the target Litematica 0.26 draws its overlays into: LitematicaPass hands out its own one here, and inside
-        // EXIT's portal the pass is moved onto EXIT's target
+        // 和 Litematica 0.26 画覆盖层用同一个目标：装了 LitematicaPass 时这里拿到的是它自己的目标，
+        // 在 EXIT 的 portal 里渲染通道会被挪到 EXIT 的目标上
         RenderTarget target = fi.dy.masa.malilib.render.RenderUtils.fb();
         GpuTextureView colorTexture = target.getColorTextureView();
         GpuTextureView depthTexture = target.useDepth ? target.getDepthTextureView() : null;

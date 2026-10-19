@@ -300,7 +300,7 @@ final class OverlayMeshBuilder {
         };
     }
 
-    // as Litematica 0.26 picks them (with its fallbacks for blocks without a model)
+    // 和 Litematica 0.26 取模型的方式一样（没有模型的方块用它的后备模型）
     private List<BlockModelPart> getModelParts(BlockPos pos, BlockState state) {
         return LitematicaRenderer.getInstance().getWorldRenderer().getModelParts(pos, state, this.rand);
     }

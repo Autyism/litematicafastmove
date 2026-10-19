@@ -26,6 +26,17 @@ repositories {
 			includeGroup "maven.modrinth"
 		}
 	}
+	exclusiveContent {
+		forRepository {
+			maven {
+				name = "FallenBreath"
+				url = "https://maven.fallenbreath.me/releases"
+			}
+		}
+		filter {
+			includeGroup "me.fallenbreath"
+		}
+	}
 }
 
 dependencies {
@@ -38,9 +49,10 @@ dependencies {
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
 
-	// Litematica 0.26.16 and MaLiLib 0.27.20 for 1.21.11 (the jars in libs/)
-	modImplementation files("libs/litematica-fabric-1.21.11-0.26.16.jar")
-	modImplementation files("libs/malilib-fabric-1.21.11-0.27.20.jar")
+	modImplementation "maven.modrinth:bEpr0Arc:mengBR9D" // Litematica 0.26.16
+	modImplementation "maven.modrinth:malilib:loabWpyU" // MaLiLib 0.27.20
+	// Litematica and MaLiLib nest it, but the development runtime does not load nested jars of dependencies.
+	modLocalRuntime "me.fallenbreath:conditional-mixin-fabric:0.6.4"
 
 	// EXIT routes the schematic rendering past shader packs. Nested, so players do not install it separately.
 	modImplementation("ml.mypals.exit:emergency_exit-fabric:${project.exit_version}") { transitive = false }
