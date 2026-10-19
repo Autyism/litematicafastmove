@@ -7,6 +7,7 @@ import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.vertex.PoseStack;
 import fi.dy.masa.litematica.render.IWorldSchematicRenderer;
 import fi.dy.masa.litematica.render.LitematicaRenderer;
+import ml.mypals.litematicafastmove.render.IrisFormat;
 import ml.mypals.litematicafastmove.render.SchematicExit;
 import net.minecraft.client.Camera;
 import net.minecraft.client.renderer.SubmitNodeCollector;
@@ -33,7 +34,8 @@ public class MixinLitematicaRenderer {
             if (group == ChunkSectionLayerGroup.TRANSLUCENT) {
                 SchematicExit.flushBatch();
             }
-            original.call(group, sampler);
+            // the block meshes are in the vanilla format (see IrisFormat)
+            IrisFormat.plainDraw(() -> original.call(group, sampler));
         });
     }
 

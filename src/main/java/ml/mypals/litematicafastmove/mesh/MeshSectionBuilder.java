@@ -4,7 +4,9 @@ import com.mojang.blaze3d.vertex.BufferBuilder;
 import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.VertexSorting;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.PoseStack;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import fi.dy.masa.litematica.config.Configs;
 import fi.dy.masa.litematica.render.IWorldSchematicRenderer;
 import fi.dy.masa.litematica.render.LitematicaRenderer;
@@ -17,6 +19,7 @@ import ml.mypals.litematicafastmove.LitematicaFastMove;
 import ml.mypals.litematicafastmove.access.PlacementBlockAccessor;
 import ml.mypals.litematicafastmove.config.FastMoveConfig;
 import ml.mypals.litematicafastmove.config.ThreadPools;
+import ml.mypals.litematicafastmove.render.IrisFormat;
 import ml.mypals.litematicafastmove.render.SchematicExit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -94,9 +97,9 @@ public final class MeshSectionBuilder {
                 List<PlacementMesh.CpuSection> sections = null;
                 try {
                     List<List<PlacementMesh.CpuSection>> built = new ArrayList<>(1);
-                    SchematicExit.plainFormat(() -> built.add(
+                    SchematicExit.plainFormat(() -> IrisFormat.plainBuild(() -> built.add(
                             build(mesh, generation, accessor, batch, !full,
-                                    clientDelta, range, camera, world, clientLevel)));
+                                    clientDelta, range, camera, world, clientLevel))));
                     sections = built.getFirst();
                 } catch (Throwable e) {
                     LitematicaFastMove.LOGGER.error("Failed to build mesh for placement '{}'", placement.getName(), e);
@@ -378,7 +381,8 @@ public final class MeshSectionBuilder {
                                          EnumMap<ChunkSectionLayer, ByteBufferBuilder> allocators, ChunkSectionLayer layer) {
         return builders.computeIfAbsent(layer, l -> new BufferBuilder(
                 allocators.computeIfAbsent(l, k -> new ByteBufferBuilder(k.bufferSize())),
-                l.pipeline().getVertexFormatMode(), l.pipeline().getVertexFormat()));
+                // the vanilla block format by name: off the render thread the game's pipelines may report Iris' widened one
+                VertexFormat.Mode.QUADS, DefaultVertexFormat.BLOCK));
     }
 
     private static ByteBuffer copy(ByteBuffer source) {

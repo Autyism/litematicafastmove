@@ -135,8 +135,9 @@ public final class PlacementMeshRenderer {
         boolean renderThrough = Configs.Visuals.SCHEMATIC_OVERLAY_RENDER_THROUGH.getBooleanValue() ||
                                 Hotkeys.RENDER_OVERLAY_THROUGH_BLOCKS.getKeybind().isKeybindHeld();
         RenderPipeline pipeline = renderThrough ? type.getRenderThrough() : type.getPipeline();
-        // as Litematica 0.26 draws its overlays; inside EXIT's portal the pass is moved onto its target
-        RenderTarget target = Minecraft.getInstance().getMainRenderTarget();
+        // the target Litematica 0.26 draws its overlays into: LitematicaPass hands out its own one here, and inside
+        // EXIT's portal the pass is moved onto EXIT's target
+        RenderTarget target = fi.dy.masa.malilib.render.RenderUtils.fb();
         GpuTextureView colorTexture = target.getColorTextureView();
         GpuTextureView depthTexture = target.useDepth ? target.getDepthTextureView() : null;
         RenderSystem.AutoStorageIndexBuffer autoStorageIndexBuffer = RenderSystem.getSequentialBuffer(type.getDrawMode());

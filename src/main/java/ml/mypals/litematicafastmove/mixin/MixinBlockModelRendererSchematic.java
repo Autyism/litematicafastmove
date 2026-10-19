@@ -15,7 +15,7 @@ public abstract class MixinBlockModelRendererSchematic {
 
     @WrapOperation(method = "shouldRenderModelSide",
             at = @At(value = "INVOKE", target = "Lfi/dy/masa/malilib/util/LayerRange;isPositionAtRenderEdgeOnSide"))
-    private boolean skipRangeEdgeOnBuilderThread(LayerRange range, BlockPos pos, Direction side, Operation<Boolean> original) {
+    private static boolean skipRangeEdgeOnBuilderThread(LayerRange range, BlockPos pos, Direction side, Operation<Boolean> original) {
         if (MeshSectionBuilder.isBuilderThread()) return false;
         return original.call(range, pos, side);
     }
